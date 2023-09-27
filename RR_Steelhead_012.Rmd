@@ -1,435 +1,1278 @@
 ---
-title: "RR steelhead 2007-2020, Inbreeding, Notebook 12"
-output:
-  html_document:
-    df_print: paged
+title: "RR 2007-2020, Counting the generations with the pedigrees with igraph, Notebook 11"
+output: html_notebook
 ---
-
-# looking at related parents in the Russian River steelhead
-
-# get the data
+using igraph to count the number of generations represented within the dataset
 ```{r}
+#install.packages("igraph")
+#install.packages("rgl")
+library(igraph)
+library(rgl)
 library(tidyverse)
-library(lubridate)
 
-spawner <- read_csv("RR_steelhead_07-20_known_sexes_corrected_lengths.csv")
-trios <- read_csv("RR_2007-2020_pedigree_ages_lengths.csv", guess_max = 2e4) %>%
-  mutate(parent_dayofyear = as.integer(parent_dayofyear))
+Ped_length_age <- read_csv("RR_2007-2020_pedigree_ages_lengths.csv", col_names = T, cols(
+  kid = col_character(),
+  ma = col_character(),
+  pa = col_character(),
+  kid_dayofyear = col_character(),
+  parent_dayofyear = col_character(),
+  parent_sg = col_character(),
+  pa_sg = col_character(),
+  ma_sg = col_character(),
+  kid_sex = col_character(),
+  new_kid_sex = col_character(),
+  pa_sex = col_character(),
+  new_pa_sex = col_character(),
+  ma_sex = col_character(),
+  new_ma_sex = col_character(),
+  SpawnYear = col_double(),
+  kid_year = col_double(),
+  kid_year2 = col_double(),
+  pa_year = col_double(),
+  ma_year = col_double(),
+  kid_sg = col_character(),
+  kid_hatchery = col_character(),
+  pa_hatchery = col_character(),
+  ma_hatchery = col_character(),
+  OffspCollection = col_character(),
+  PopName = col_character(),
+  FDR = col_double(),
+  Pvalue = col_double(),
+  LOD = col_double(),
+  P.Pr.C_Se_Se = col_double(),
+  P.Pr.Max = col_double(),
+  MaxP.Pr.Relat = col_character(),
+  TotPaNonExc = col_double(),
+  TotMaNonExc = col_double(),
+  TotUnkNonExc = col_double(),
+  TotPairsMendCompat = col_double(),
+  TotPairsMendAndLogL = col_double(),
+  TotParsMendLoglAndRank = col_double(),
+  TotPairsNonExc = col_double(),
+  KidMiss = col_double(),
+  PaMiss = col_double(),
+  MaMiss = col_double(),
+  MI.Kid.Pa = col_double(),
+  MI.Kid.Ma = col_double(),
+  MI.Trio = col_double(),
+  MendIncLoci = col_character(),
+  kid_age = col_double(),
+  new_parent_sg = col_date(format = ""),
+  new_kid_sg = col_date(format = ""),
+  pa_age = col_double(),
+  ma_age = col_double(),
+  kid_length = col_double(),
+  ma_length = col_double(),
+  pa_length = col_double()
+))
 
-spawner
-```
-```{r}
-full_spawner_meta <- read_rds("RR_spawner_meta.rds")
-full_spawner_meta
-
-meta_we_want <- full_spawner_meta %>% select(NMFS_DNA_ID, SAMPLE_ID, SAMPLE_COMMENTS, Sample_ID) %>% rename(indiv = NMFS_DNA_ID)
-
-spawners_w_meta <- left_join(spawner, meta_we_want, by = "indiv")
-spawners_w_meta 
-```
-```{r}
-kid_meta <- meta_we_want %>% select(-Sample_ID) %>% rename(kid = indiv, kid_sample_id = SAMPLE_ID, kid_comments = SAMPLE_COMMENTS)
-ma_meta <- meta_we_want %>% select(-Sample_ID) %>% rename(ma = indiv, ma_sample_id = SAMPLE_ID, ma_comments = SAMPLE_COMMENTS)
-pa_meta <- meta_we_want %>% select(-Sample_ID) %>% rename(pa = indiv, pa_sample_id = SAMPLE_ID, pa_comments = SAMPLE_COMMENTS)
-
-trio_meta <- trios %>% left_join(kid_meta, by = "kid") %>% 
-  left_join(ma_meta, by = "ma") %>% 
-  left_join(pa_meta, by = "pa")
-
-trio_meta
-```
-
-
-
-# Looking at inbreeding in the RR
-## How often are the parents half sibs/full sibs? How often are the parents half first cousins/full first cousins?
-```{r}
-#want to join the data about maternal and paternal grandparents. this will work for all the trios in teh age matrix whwere i have parents (and ages) for all the kids and the ma and pa
-mat_gdparents <- trio_meta %>% select(kid, ma, pa) %>% rename(ma = kid, maternal_grandma = ma, maternal_grandpa = pa)
-pat_gdparents <- trio_meta %>% select(kid, ma, pa) %>% rename(pa = kid, paternal_grandma = ma, paternal_grandpa = pa)
-
-mat_great_gparents1 <- trio_meta %>% select(kid, ma, pa) %>% rename(maternal_grandma = kid, maternal_grandma_ma = ma, maternal_grandma_pa = pa)
-mat_great_gparents2 <- trio_meta %>% select(kid, ma, pa) %>% rename(maternal_grandpa = kid, maternal_grandpa_ma = ma, maternal_grandpa_pa = pa)
-
-#maternal grandma's ma == maternal_grandma_ma
-
-pat_great_gparents1 <- trio_meta %>% select(kid, ma, pa) %>% rename(paternal_grandma = kid, paternal_grandma_ma = ma, paternal_grandma_pa = pa)
-pat_great_gparents2 <- trio_meta %>% select(kid, ma, pa) %>% rename(paternal_grandpa = kid, paternal_grandpa_ma = ma, paternal_grandpa_pa = pa)
-
-
-trio_data <- trio_meta %>% 
-  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
-  filter(!is.na(ma_age), !is.na(pa_age)) %>% 
-  distinct(ppair, .keep_all = T) %>%
-  left_join(mat_gdparents, by = "ma") %>% 
-  left_join(pat_gdparents, by = "pa") %>% 
-  left_join(mat_great_gparents1, by = "maternal_grandma") %>% 
-  left_join(mat_great_gparents2, by = "maternal_grandpa") %>% 
-  left_join(pat_great_gparents1, by = "paternal_grandma") %>% 
-  left_join(pat_great_gparents2, by = "paternal_grandpa") %>% 
-  mutate(ma_pa_relationship = case_when((maternal_grandma == paternal_grandma & maternal_grandpa == paternal_grandpa) ~ "full_sib",
-                                        maternal_grandma == paternal_grandma ~ "half_sib",
-                                        maternal_grandpa == paternal_grandpa ~ "half_sib",
-                                        (maternal_grandma_ma == paternal_grandma_ma & maternal_grandma_pa == paternal_grandma_pa) ~ "first_cousin",
-                                        (maternal_grandpa_ma == paternal_grandpa_ma & maternal_grandpa_pa == paternal_grandpa_pa) ~ "first_cousin",
-                                        (maternal_grandma_ma == paternal_grandpa_ma & maternal_grandma_pa == paternal_grandpa_pa) ~ "first_cousin",
-                                        (maternal_grandpa_ma == paternal_grandma_ma & maternal_grandpa_pa == paternal_grandma_pa) ~ "first_cousin",
-                                        maternal_grandma_ma == paternal_grandma_ma ~ "half_first_cousin",
-                                        maternal_grandma_ma == paternal_grandpa_ma ~ "half_first_cousin",
-                                        maternal_grandma_pa == paternal_grandma_pa ~ "half_first_cousin",
-                                        maternal_grandma_pa == paternal_grandpa_pa ~ "half_first_cousin",
-                                        maternal_grandpa_ma == paternal_grandma_ma ~ "half_first_cousin",
-                                        maternal_grandpa_ma == paternal_grandpa_ma ~ "half_first_cousin",
-                                        maternal_grandpa_pa == paternal_grandma_pa ~ "half_first_cousin",
-                                        maternal_grandpa_pa == paternal_grandpa_pa ~ "half_first_cousin",
-                                        TRUE ~ "other"))
-         
-
-#3 full sibs, 32 half sibs that are ma and pa, out of 3807 unique parent pairs
-3/(3772+32+3)
-32/(3772+32+3)
-
+Ped_length_age
 ```
 
-
-# Now let's find the recorded mating pairs that did not have any offspring return as adults (2013-2020)
+Now I want to select only the columns of interest for animal model attempts
 ```{r}
-try_it_all <- trio_meta %>% 
-  select(kid, ma, pa, ma_sample_id, pa_sample_id, everything()) %>%
-  filter(SpawnYear >= 2013) %>% 
-  group_by(SpawnYear, ma_hatchery, parent_dayofyear) %>% 
-  mutate(ma_id = str_sub(ma_sample_id, -4,-1)) %>% 
-  mutate(pa_id = str_sub(pa_sample_id, -5,-1)) %>% 
-  mutate(ma_id_2 = str_sub(ma_id, 1,-2)) %>% 
-  mutate(pa_id_2 = str_sub(pa_id, 1,-3)) %>% 
-  mutate(pa_id_n = str_sub(pa_id, -1,-1)) %>% 
-  select(ma_sample_id, ma_id, ma_id_2, pa_sample_id, pa_id, pa_id_2, pa_id_n, everything()) %>% 
-  filter(ma_id_2 == pa_id_2) %>% 
-  arrange(ma_sample_id, pa_id_n) %>% 
-  mutate(pa_id_n = replace(pa_id_n, pa_id_n == "B", "b")) %>% 
-  mutate(pa_id_n = replace(pa_id_n, pa_id_n == "C", "c")) %>%
-  ungroup() %>% 
-  group_by(SpawnYear, ma_hatchery, parent_dayofyear, ma_id_2) %>% 
-  count(pa_id_n) %>% 
-#write_csv(., "RR_inbreeding_finding_missing_pairs.csv")
-  pivot_wider(., names_from = pa_id_n, values_from = n)
+Pedigree.prep <- Ped_length_age %>%
+  filter(new_ma_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>%
+  select(kid_year, kid, pa, ma) %>%
+  arrange(kid_year)
+```
+
+```{r}
+AnimalModel.prep <- Ped_length_age %>% select(kid, ma, pa, new_kid_sex, kid_age, kid_hatchery, SpawnYear, kid_length)
+```
+
+```{r}
+
+Pedigree.prep %>% select(kid) %>% unique() #13067 unique kid ids
+
+teeny <- Pedigree.prep %>%
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
   
-try_it_all %>% ungroup %>% count(SpawnYear)
 
-missing_all <- try_it_all %>% filter(is.na(a) | is.na(b) | is.na(c)) %>% 
-  mutate(missing = case_when((is.na(a) & is.na(b)) ~ "Ma,Mb",
-                             (is.na(a) & is.na(c)) ~ "Ma,Mc",
-                             (is.na(b) & is.na(c)) ~ "Mb,Mc",
-                             is.na(a) ~ "Ma",
-                             is.na(b) ~ "Mb",
-                             is.na(c) ~ "Mc")) %>% 
-  separate(missing, into = c("missing_1", "missing_2"), sep = ",") %>% 
-  pivot_longer(cols = missing_1:missing_2, values_to = "missing") %>% 
-  select(ma_id_2, missing) %>% 
-  filter(!is.na(missing)) %>% 
-  mutate(missing_males = paste(ma_id_2, missing, sep = "")) %>% 
-  ungroup()
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
 
-missing_all %>% ungroup() %>% count(SpawnYear)
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
 
-ids_split <- trio_meta %>% 
-  select(kid, ma, pa, ma_sample_id, pa_sample_id, everything()) %>%
-  filter(SpawnYear >= 2013) %>% 
-  group_by(SpawnYear, ma_hatchery, parent_dayofyear) %>% 
-  mutate(ma_id = str_sub(ma_sample_id, -4,-1)) %>% 
-  mutate(pa_id = str_sub(pa_sample_id, -5,-1)) %>% 
-  mutate(ma_id_2 = str_sub(ma_id, 1,-2)) %>% 
-  mutate(pa_id_2 = str_sub(pa_id, 1,-3)) %>% 
-  mutate(pa_id_n = str_sub(pa_id, -1,-1)) %>% 
-  select(ma_sample_id, ma_id, ma_id_2, pa_sample_id, pa_id, pa_id_2, pa_id_n, everything()) %>% 
-  group_by(ma_hatchery, parent_dayofyear) %>% 
-  filter(ma_id_2 == pa_id_2) %>% 
-  arrange(ma_sample_id, pa_id_n) %>% 
-  mutate(pa_id_n = replace(pa_id_n, pa_id_n == "B", "b")) %>% 
-  mutate(pa_id_n = replace(pa_id_n, pa_id_n == "C", "c")) %>% 
-  ungroup()
+sapply(boing$res, length)
 
-missing_pairs <- missing_all %>% 
-  left_join(ids_split, by = c("SpawnYear","ma_hatchery", "parent_dayofyear", "ma_id_2")) %>% 
-  select(ma_sample_id, missing_males, SpawnYear, ma_hatchery) %>% 
-  mutate(missing_male_id = paste(str_sub(ma_sample_id, 1,-5), missing_males, sep = "")) %>% 
-  ungroup() %>% 
-  select(ma_sample_id, missing_male_id, SpawnYear, ma_hatchery) %>% 
-  mutate(pair = paste(ma_sample_id, missing_male_id, sep = "_")) %>% 
-  distinct(pair, .keep_all = T) %>% 
-  mutate(idx = row_number())
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
 
-missing_pairs %>% count(SpawnYear)
-missing_pairs
+
+kid_paths(kiddos[7269])
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+ggplot(res, aes(x = path_lengths,y =..prop..)) +
+  geom_bar()+
+  ggtitle("Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+res %>% filter(path_lengths == 1) %>% unique()  #2910
+res %>% filter(path_lengths == 2) %>% unique()  #3298
+res %>% filter(path_lengths == 3) %>% unique()  #3994
+res %>% filter(path_lengths == 4) %>% unique()  #2527
+res %>% filter(path_lengths == 5) %>% unique()  #650
+res %>% filter(path_lengths == 6) %>% unique()  #49
+res
+
+res %>% select(kids) %>% unique #7269
+res %>% unique() #13428
+length(founders) #2647 founders (parents only)
+length(kiddos) #7269 (kids only, never parents)
 ```
 
+#Edited code frorm Eric Anderson
+## Make a pedigree figure with all of the 5-generation individuals
+
+I think the way we are going to want to do this is to find all the individuals
+that are on a 6-generation path.  We will color those in a certain color.  If any
+of those individuals have only one parent on the path, then we should have the other parent as 
+well, but not grandparents, etc.   We will plot  these with my 'pedvis' package.  This relies on
+GraphViz (I think you can do "brew install graphviz" on the terminal to get that.)  
+Then, get the package with:
 ```{r}
-#maternal parents of missing pair
-mat_parents_mp <- missing_pairs %>% 
-  select(ma_sample_id, idx) %>% 
-  left_join(trio_meta, by = c("ma_sample_id" = "kid_sample_id")) %>% 
-  filter(!is.na(kid)) %>% 
-  select(ma_sample_id, kid, ma, pa, idx) %>% 
-  rename(f_sample_id = ma_sample_id, female = kid, ma_f = ma, pa_f = pa)
-
-pat_parents_mp <- missing_pairs %>% 
-  select(missing_male_id, idx) %>% 
-  left_join(trio_meta, by = c("missing_male_id" = "kid_sample_id")) %>% 
-  filter(!is.na(kid)) %>% 
-  select(missing_male_id, kid, ma, pa, idx) %>% 
-  rename(m_sample_id = missing_male_id, male = kid, ma_m = ma, pa_m = pa)
-
-gparents1_mp <- mat_parents_mp %>% 
-  select(ma_f, idx) %>% 
-  left_join(trio_meta, by = c("ma_f" = "kid")) %>% 
-  select(ma_f, ma, pa) %>% 
-  rename(mat_gma_f = ma, mat_gpa_f = pa) %>% 
-  distinct(ma_f, .keep_all = T)
-
-#ma_f = mother of the female
-#mat_gma_f = maternal grandma of the female
-
-gparents2_mp <- mat_parents_mp %>% 
-  select(pa_f, idx) %>% 
-  left_join(trio_meta, by = c("pa_f" = "kid")) %>% 
-  select(pa_f, ma, pa) %>% 
-  rename(pat_gma_f = ma, pat_gpa_f = pa) %>% 
-  distinct(pa_f, .keep_all = T)
-
-gparents3_mp <- pat_parents_mp %>% 
-  select(ma_m, idx) %>% 
-  left_join(trio_meta, by = c("ma_m" = "kid")) %>% 
-  select(ma_m, ma, pa) %>% 
-  rename(mat_gma_m = ma, mat_gpa_m = pa) %>% 
-  distinct(ma_m, .keep_all = T)
-
-gparents4_mp <- pat_parents_mp %>% 
-  select(pa_m, idx) %>% 
-  left_join(trio_meta, by = c("pa_m" = "kid")) %>% 
-  select(pa_m, ma, pa) %>% 
-  rename(pat_gma_m = ma, pat_gpa_m = pa) %>% 
-  distinct(pa_m, .keep_all = T)
+#remotes::install_github("eriqande/pedvis")
+library(pedvis)
+simple_test_ped()
 ```
 
-# Now lets find the related spawn pairs out of the group that did not produce offspring 
+### Find all individuals on a 6-generation path
+
+I think we can do this just by 
 ```{r}
-#no_offspring <- mat_parents_mp %>% 
-#  inner_join(pat_parents_mp, by = c("idx")) %>% 
-#  mutate(f_m_relationship = case_when((ma_f == ma_m & pa_f == pa_m) ~ "full_sib",
- #                                       ma_f == ma_m ~ "half_sib",
-  #                                      pa_f == pa_m ~ "half_sib")) 
+six_path_func <- function(x) {
+  z <- all_shortest_paths(graph, from = x, to = founders, mode = "out")$res
+  z[sapply(z, length) >= 7]
+}
 
-no_offspring  <- missing_pairs %>% 
-  mutate(ppair = paste(ma_sample_id, missing_male_id, sep = "_")) %>% 
-  distinct(ppair, .keep_all = T) %>%
-  rename(f_sample_id = ma_sample_id,  m_sample_id = missing_male_id ) %>% 
-  inner_join(mat_parents_mp, by = c("f_sample_id", "idx")) %>% 
-  inner_join(pat_parents_mp, by = c("m_sample_id", "idx")) %>% 
-  inner_join(gparents1_mp, by = "ma_f") %>% 
-  inner_join(gparents2_mp, by = "pa_f") %>% 
-  inner_join(gparents3_mp, by = "ma_m") %>% 
-  inner_join(gparents4_mp, by = "pa_m") %>% 
-  mutate(f_m_relationship = case_when((ma_f == ma_m & pa_f == pa_m) ~ "full_sib",
-                                        ma_f == ma_m ~ "half_sib",
-                                        pa_f == pa_m ~ "half_sib",
-                                        (mat_gma_f == mat_gma_m & mat_gpa_f == mat_gpa_m) ~ "first_cousin",
-                                        (mat_gma_f == pat_gma_m & mat_gpa_f == pat_gpa_m) ~ "first_cousin",
-                                        (pat_gma_f == mat_gma_m & pat_gpa_f == mat_gpa_m) ~ "first_cousin",
-                                        (pat_gma_f == pat_gma_m & pat_gpa_f == pat_gpa_m) ~ "first_cousin",
-                                         mat_gma_f == mat_gma_m ~ "half_first_cousin",
-                                         mat_gpa_f == mat_gpa_m ~ "half_first_cousin",
-                                         mat_gma_f == pat_gma_m ~ "half_first_cousin",
-                                         mat_gpa_f == pat_gpa_m ~ "half_first_cousin",
-                                         pat_gma_f == mat_gma_m ~ "half_first_cousin",
-                                         pat_gpa_f == mat_gpa_m~ "half_first_cousin",
-                                         pat_gma_f == pat_gma_m~ "half_first_cousin",
-                                         pat_gpa_f == pat_gpa_m~ "half_first_cousin",
-                                        TRUE ~ "other"))
-           
-
-
-
-no_offspring
-
-no_offspring %>% 
-  count(f_m_relationship)
-no_offspring %>% count(SpawnYear)
-
-```
-
-```{r}
-offspring_nums <- read_csv("RR_offspring_num_per_pair.csv") %>% separate(., id, sep = ":", into = c("pa", "ma")) %>% 
-  select(-type) %>% 
-  rename(n_offspring = n)
-offspring_nums
-
-trios_offspring_n <- trio_data %>%
-  left_join(offspring_nums, by = c("ma", "pa"))
-
-trios_offspring_n %>% 
-  ggplot()+
-  geom_histogram(aes(x= n_offspring, y =..density..))+
-  facet_wrap(~ma_pa_relationship)
-
-trios_offspring_n %>%
-  group_by(ma_pa_relationship) %>% 
-  summarize(mean(n_offspring, na.rm = T))
-```
-
-```{r}
-trios_offspring_n %>% 
-  filter(ma_pa_relationship == "full_sib") 
-
-no_offspring %>% 
-  filter(f_m_relationship == "full_sib")
-
-
-```
-
-#add ages for the female and male in the "no_offspring" dataset and see if any patterns emerge
-```{r}
-no_offspring
-trios
-kid_ages_only <- trios %>% 
-  select(kid, kid_age)
-no_offspring_age <- no_offspring %>% 
-  left_join(kid_ages_only, by = c("female" = "kid")) %>% 
-  rename(female_age = kid_age) %>% 
-  left_join(kid_ages_only, by = c("male" = "kid")) %>% 
-  rename(male_age = kid_age) %>% 
-  mutate(pair_age = paste(male_age, female_age, sep = "_")) %>% 
-  mutate(mid_age = ((female_age + male_age) / 2) )
-           
+six_path_tibble <- tibble(kids = kiddos) %>%
+  mutate(path_lists = map(.x = kids, .f = six_path_func)) %>%
+  mutate(plength = map_int(path_lists, length)) %>%
+  filter(plength > 0)
   
-none_midage <- no_offspring_age %>% 
-  filter(SpawnYear >= 2013, SpawnYear < 2018) %>% 
-  count(mid_age) %>% 
-  mutate(freq = n/(sum(n)))
+```
+There are 49 paths of length >= 6 generations.  We obviously want to have any individuals explicitly on
+such a path in the pedigree (colored gray). But, we also should have any immediate parents of them that are not on the path
+as unshaded nodes.  That will
+make a nice plot, I think.  It might still be too many individuals to make a nice pedigree, but let's go for it.
 
-none_female <- no_offspring_age %>% 
-  filter(SpawnYear >= 2013, SpawnYear < 2018) %>%
-  count(female_age) %>% 
-  mutate(freq = n/(sum(n)))
+For what we need to do, it will suffice to just have a vector of individuals on those paths, so
+let's get those:
+```{r}
+on_path_ids <- lapply(six_path_tibble$path_lists, function(x) unique(names(unlist(x)))) %>%
+  unlist() %>%
+  unique()
 
-none_male <- no_offspring_age %>% 
-  filter(SpawnYear >= 2013, SpawnYear < 2018) %>%
-  count(male_age) %>% 
-  mutate(freq = n/(sum(n)))
+```
+That is 162 individuals.  OK.
 
-#compare the freq of age groups with no offspring to the frea of age groups of fish with offspring
-offspring_ma <- trios %>% 
-  filter(SpawnYear < 2018) %>% 
-  filter(new_ma_sex == "Female") %>% 
-  mutate(pair = paste(ma,pa , sep = "_")) %>% 
-  filter(!is.na(ma_age)) %>% 
-  distinct(ma, .keep_all = T) %>% 
-  count(ma_age) %>% 
-  mutate(freq = n/(sum(n)))
+Now, we just filter our metadata/pedigree table to offspring that are amongst these 162
+individuals:
+```{r}
+fish_for_big_ped <- as_tibble(Ped_length_age) %>%
+  filter(kid %in% on_path_ids)
+```
 
-offspring_pa <- trios %>% 
-  filter(SpawnYear < 2018) %>% 
-  filter(new_pa_sex == "Male") %>% 
-  mutate(pair = paste(ma,pa , sep = "_")) %>% 
-  filter(!is.na(pa_age)) %>% 
-  distinct(pa, .keep_all = T) %>% 
-  count(pa_age) %>% 
-  mutate(freq = n/(sum(n)))
+### Plot those with Pedvis
 
-offspring_pair <- trios %>% 
-  filter(SpawnYear < 2018) %>% 
-  filter(new_ma_sex == "Female", new_pa_sex == "Male") %>% 
-  mutate(pair = paste(ma,pa , sep = "_")) %>% 
-  mutate(pair_age = paste(ma_age, pa_age, sep = "_")) %>% 
-  mutate(mid_age = ((ma_age + pa_age) / 2) ) %>% 
-  filter(!is.na(mid_age)) %>% 
-  distinct(pair, .keep_all = T) %>% 
-  count(mid_age) %>% 
-  mutate(freq = n/(sum(n)))
+Now that we have all those fish, we can prep them for pedvis.
+
+It looks like we just need a Kid Pa Ma data frame:
+```{r}
+pped <- fish_for_big_ped %>%
+  select(kid, pa, ma)
+
+ped_dump <- ped2dot(x = pped, pa = "pa", ma = "ma", kid = "kid",
+        ObsNodes = on_path_ids, 
+        outf = "6-gen-paths-ped",
+        pfactorNodeStyle = "invis",
+        pfactorEdgeStyle = "invis"
+        )
   
-#no check if significantly different with chi squared test
-
-chisq.test(x = none_female$n, p = offspring_ma$freq) #sig
-chisq.test(x = none_male$n, p = offspring_pa$freq) #not sig
-chisq.test(x= none_midage$n, p = offspring_pair$freq) #sig
 ```
 
-# Join the two datasets
+The picture we want is in `6-gen-paths-ped.pdf`.
 
-## filter for only 2013-2017
+
+let's try 3 geneartions: 
+###
+{r, eval=FALSE}
+three_path_func <- function(x) {
+  z <- all_shortest_paths(graph, from = x, to = founders, mode = "out")$res
+  z[sapply(z, length) >= 4]
+}
+
+three_path_tibble <- tibble(kids = kiddos) %>%
+  mutate(path_lists = map(.x = kids, .f = three_path_func)) %>%
+  mutate(plength = map_int(path_lists, length)) %>%
+  filter(plength > 0)
+on_path_ids <- lapply(three_path_tibble$path_lists, function(x) unique(names(unlist(x)))) %>%
+  unlist() %>%
+  unique()
+fish_for_big_ped <- as_tibble(Ped_length_age) %>%
+  filter(kid %in% on_path_ids)
+pped <- fish_for_big_ped %>%
+  select(kid, pa, ma)
+
+ped_dump <- ped2dot(x = pped, pa = "pa", ma = "ma", kid = "kid",
+        ObsNodes = on_path_ids, 
+        outf = "3-gen-paths-ped",
+        pfactorNodeStyle = "invis",
+        pfactorEdgeStyle = "invis"
+        )
+###
+
+
+
+# Going to see how many generations represented in indivdiaul years
+# 2013
 ```{r}
-this <- no_offspring %>% 
-  mutate(n_offspring = 0) %>% 
-  select(female, male, f_m_relationship, n_offspring, SpawnYear, ma_hatchery) %>% 
-  rename(ma = female, pa = male, ma_pa_relationship = f_m_relationship, year = SpawnYear, hatchery = ma_hatchery) %>% 
-  filter(year >= 2013, year <=2017)%>% 
-  filter(ma != "M082455") %>% 
-  mutate(ma_pa = str_c(ma, pa, sep = "_")) %>% 
-  filter(ma_pa != "M092804_M092806" )
-#getting rid of duplicates parent pairs -- havea  few parents with zero offpsring in this list, but hte next list has them haveing offspring
+this <- Ped_length_age %>%
+  filter(new_ma_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>%
+  select(kid_year, SpawnYear, kid, pa, ma) %>%
+  arrange(kid_year)
 
-this %>% count(year)
 
-that <- trios_offspring_n %>% 
-  select(ma, pa, ma_pa_relationship, n_offspring, SpawnYear, ma_hatchery.x, ma_age, pa_age) %>% 
-  rename(year = SpawnYear, hatchery = ma_hatchery.x) %>% 
-  filter(year >= 2013, year <=2017)
-that %>% count(year)
+teeny <- this %>%
+  filter(SpawnYear <= 2013) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
 
-this_that <- bind_rows(this, that)
-this_that %>% count(year)
-this_that %>% count(hatchery)
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
 
-#write_csv(this_that, "RR_2013_2017_parent_pairs_and_num_offspring.csv")
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
 
-this_that %>% count(ma_age)
-this_that %>% count(pa_age)
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+res %>%
+  ggplot() +
+  geom_bar(aes(x = path_lengths,y =..prop..))+
+  ggtitle("2013, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(10633+5209+167)/20629 # 0.7760434
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(5209	+167)/20629 # 0.260604
+
 ```
+
+
+# 2014
+```{r}
+
+teeny <- this %>%
+  filter(SpawnYear <= 2014) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+ggplot(res, aes(x = path_lengths,y =..prop..)) +
+  geom_bar()+
+  ggtitle("2014, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(11162+6529	+443)/22417 # 0.8089396
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(6529	+443)/22417# 0.311014
+
+```
+
+
+
+# 2015
+```{r}
+
+teeny <- this %>%
+  filter(SpawnYear <= 2015) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+ggplot(res, aes(x = path_lengths,y =..prop..)) +
+  geom_bar()+
+  ggtitle("2015, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(9437	+ 14168	+ 4873+ 129)/32809 # 0.8719254
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(14168+4873+129)/32809# 0.5842909
+```
+
+
+# 2016
+```{r}
+
+teeny <- this %>%
+  filter(SpawnYear <= 2016) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+ggplot(res, aes(x = path_lengths,y =..prop..)) +
+  geom_bar()+
+  ggtitle("2016, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(7900	+18370+10332+325)/41166  # 0.8970267
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(18370+10332+325)/41166 # 0.7051207
+
+
+```
+
+
+
+# 2017
 
 ```{r}
-this_that %>% 
-  group_by(ma_pa_relationship) %>% 
-  summarize(mean(n_offspring))
 
-group_order <- c("full_sib", "half_sib", "first_cousin", "half_first_cousin", "other" )
+teeny <- this %>%
+  filter(SpawnYear <= 2017) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
 
-inbreeding <- this_that %>% 
-  group_by(ma_pa_relationship) %>% 
-  summarize(mean(n_offspring)) %>% 
-  rename(mean_offspring = "mean(n_offspring)") %>% 
-  ggplot()+
-  geom_col(aes(x = ma_pa_relationship, y = mean_offspring, fill = ma_pa_relationship))+
-  scale_fill_manual(values = c("#9a532b","#503143","#c49b60", "#79ad9f", "#193439"))+
-  scale_x_discrete(limits = group_order)+
-  theme_classic()+
-  scale_y_continuous(breaks = seq(0,1.5, 0.25))+
-  theme(legend.position = "none")+
-  labs(x = "Parent Pair Relationship", y = "Mean Offspring")
-inbreeding
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
 
-ggsave("inbreeding.png", plot = inbreeding, width = 5, height = 4)
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
 
-this_that %>% 
-  group_by(ma_pa_relationship) %>% 
-  count()
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
 
-this_that %>% 
-  group_by(ma_pa_relationship) %>% 
-  count(n_offspring != 0)
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
 
-this_that %>% 
-  count(ma_pa_relationship)
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+ggplot(res, aes(x = path_lengths,y =..prop..)) +
+  geom_bar()+
+  ggtitle("2017, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(7284+18254+15022+2814+88)/47857   # 0.9081639
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(18254+15022+2814+88)/47857  #0.7559605
+
 ```
 
-Raw numbers of related parent pairs (2013-2017):
-14 full sibling pairs (2 pairs had offspring) = 2/14 = 14.3%
-	Mean num offspring 0.3571429		
-30 half sibling pairs (19 pairs had offspring) = 19/30 = 63.3%
-	Mean num offspring 0.8333333	
-25 first cousin pairs (14 pairs had offspring) = 14/25 = 56%
-	Mean num offspring 0.8800000
-59 half first cousin pairs (38 pairs had offspring) = 38/59 = 64.4%
-	Mean num offspring 1.1525424	
-3708 other pairs (2620 pairs had offspring) =2620/3708 = 70.66% 
-	Mean num offspring 	1.524811		
+
+# Let's look at individual years by hatchery
+
+# Warm Springs, 2013
+
+```{r}
+this <- Ped_length_age %>%
+  filter(new_ma_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>%
+  select(kid_year, SpawnYear, kid, pa, ma, ma_hatchery) %>%
+  arrange(kid_year)
+
+
+teeny <- this %>%
+  filter(ma_hatchery == "Warm_Springs") %>% 
+  filter(SpawnYear <= 2013) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+res %>%
+  ggplot() +
+  geom_bar(aes(x = path_lengths,y =..prop..))+
+  ggtitle("WS 2013, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(4595+4813+167)/12075 # 0.7929607
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(4813+167)/12075 # 0.4124224
+
+```
+
+# Warm Springs 2014
+```{r}
+this <- Ped_length_age %>%
+  filter(new_ma_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>%
+  select(kid_year, SpawnYear, kid, pa, ma, ma_hatchery) %>%
+  arrange(kid_year)
+
+
+teeny <- this %>%
+  filter(ma_hatchery == "Warm_Springs") %>% 
+  filter(SpawnYear <= 2014) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+res %>%
+  ggplot() +
+  geom_bar(aes(x = path_lengths,y =..prop..))+
+  ggtitle("WS, 2014, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(4173+5655+411)/12835 # 0.7977406
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(5655+411)/12835 # 0.4726139
+
+```
+
+# Warm Springs 2015
+```{r}
+this <- Ped_length_age %>%
+  filter(new_ma_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>%
+  select(kid_year, SpawnYear, kid, pa, ma, ma_hatchery) %>%
+  arrange(kid_year)
+
+
+teeny <- this %>%
+  filter(ma_hatchery == "Warm_Springs") %>% 
+  filter(SpawnYear <= 2015) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+res %>%
+  ggplot() +
+  geom_bar(aes(x = path_lengths,y =..prop..))+
+  ggtitle("WS, 2015, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(4003+7911+4578+129)/19605 # 0.8477939
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(7911+4578+129)/19605 # 0.6436113
+
+```
+
+# Warm Springs 2016
+```{r}
+this <- Ped_length_age %>%
+  filter(new_ma_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>%
+  select(kid_year, SpawnYear, kid, pa, ma, ma_hatchery) %>%
+  arrange(kid_year)
+
+
+teeny <- this %>%
+  filter(ma_hatchery == "Warm_Springs") %>% 
+  filter(SpawnYear <= 2016) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+res %>%
+  ggplot() +
+  geom_bar(aes(x = path_lengths,y =..prop..))+
+  ggtitle("WS, 2016, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(4234+6714+9421+305)/24109 # 0.8575221
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(6714+9421+305)/24109 # 0.681903
+
+```
+
+# Warm Springs 2017
+```{r}
+this <- Ped_length_age %>%
+  filter(new_ma_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>%
+  select(kid_year, SpawnYear, kid, pa, ma, ma_hatchery) %>%
+  arrange(kid_year)
+
+
+teeny <- this %>%
+  filter(ma_hatchery == "Warm_Springs") %>% 
+  filter(SpawnYear <= 2017) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+res %>%
+  ggplot() +
+  geom_bar(aes(x = path_lengths,y =..prop..))+
+  ggtitle("WS, 2017, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(4547+5791+11699+2659+88)/28224 # 0.8781179
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(5791+11699+2659+88)/28224 # 0.7170139
+
+```
+
+#Coyote Valley
+
+#Coyote Valley, 2013
+```{r}
+this <- Ped_length_age %>%
+  filter(new_ma_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>%
+  select(kid_year, SpawnYear, kid, pa, ma, ma_hatchery) %>%
+  arrange(kid_year)
+
+
+teeny <- this %>%
+  filter(ma_hatchery == "Coyote_Valley") %>% 
+  filter(SpawnYear <= 2013) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+res %>%
+  ggplot() +
+  geom_bar(aes(x = path_lengths,y =..prop..))+
+  ggtitle("CV, 2013, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(5824+288)/8488 # 0.7200754
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(288)/8488 # 0.03393025
+
+```
+
+# Coyote Valley 2014
+```{r}
+this <- Ped_length_age %>%
+  filter(new_ma_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>%
+  select(kid_year, SpawnYear, kid, pa, ma, ma_hatchery) %>%
+  arrange(kid_year)
+
+
+teeny <- this %>%
+  filter(ma_hatchery == "Coyote_Valley") %>% 
+  filter(SpawnYear <= 2014) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+res %>%
+  ggplot() +
+  geom_bar(aes(x = path_lengths,y =..prop..))+
+  ggtitle("CV, 2014, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(6739+746)/9483 # 0.7893072
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(746)/9483 # 0.07866709
+
+```
+
+#Coyote Valley 2015
+```{r}
+this <- Ped_length_age %>%
+  filter(new_ma_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>%
+  select(kid_year, SpawnYear, kid, pa, ma, ma_hatchery) %>%
+  arrange(kid_year)
+
+
+teeny <- this %>%
+  filter(ma_hatchery == "Coyote_Valley") %>% 
+  filter(SpawnYear <= 2015) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+res %>%
+  ggplot() +
+  geom_bar(aes(x = path_lengths,y =..prop..))+
+  ggtitle("CV, 2015, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(5886+4424+113)/12370 # 0.8426031
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(4424+113)/12370 # 0.3667745
+
+```
+
+#Coyote Valley 2016
+```{r}
+this <- Ped_length_age %>%
+  filter(new_ma_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>%
+  select(kid_year, SpawnYear, kid, pa, ma, ma_hatchery) %>%
+  arrange(kid_year)
+
+
+teeny <- this %>%
+  filter(ma_hatchery == "Coyote_Valley") %>% 
+  filter(SpawnYear <= 2016) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+res %>%
+  ggplot() +
+  geom_bar(aes(x = path_lengths,y =..prop..))+
+  ggtitle("CV, 2016, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(4871+8052+493)/15390 # 0.8717349
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(8052+493)/15390 # 0.5552307
+
+```
+
+# Coyote Valley 2017
+```{r}
+this <- Ped_length_age %>%
+  filter(new_ma_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>%
+  select(kid_year, SpawnYear, kid, pa, ma, ma_hatchery) %>%
+  arrange(kid_year)
+
+
+teeny <- this %>%
+  filter(ma_hatchery == "Coyote_Valley") %>% 
+  filter(SpawnYear <= 2017) %>% 
+  as_tibble() %>%
+  mutate(kid_year = as.character(kid_year))
+
+lumped <- bind_rows(teeny %>%
+            select(kid, pa) %>%
+            rename(Parent = pa),
+          teeny %>%
+            select(kid, ma) %>%
+            rename(Parent = ma)
+)
+
+graph <- lumped %>%
+  graph_from_data_frame(., directed = TRUE, vertices = NULL)
+  
+
+outdegrees <- degree(graph, mode = "out")
+founders <- names(outdegrees)[outdegrees == 0]
+indegrees <- degree(graph, mode = "in")
+kiddos <- names(indegrees)[indegrees == 0]
+
+boing <- all_shortest_paths(graph, from = kiddos[500], to = founders, mode = "out")
+
+sapply(boing$res, length)
+
+kid_paths <- function(kid) {
+  -1 + all_shortest_paths(graph, from = kid, to = founders, mode = "out")$res %>%
+    sapply(., length)
+}
+
+
+
+result <- tibble(kids = kiddos) %>%
+  mutate(path_lengths = map(kids, .f = kid_paths))
+
+res <- unnest(result, cols = c(path_lengths))
+
+res %>%
+  ggplot() +
+  geom_bar(aes(x = path_lengths,y =..prop..))+
+  ggtitle("CV, 2017, Generations represented in the dataset" )+
+  xlab("Generations")+
+  ylab("Proportion of Lineages")
+
+
+res %>% count(path_lengths)
+
+#2 paths for more
+(4320+8952+1897+51)/17324 #0.87855 
+
+#for siblings, need 2 paths from parent to offspring
+
+#for cousins, need 3 paths from parent to offspring
+
+#3paths or more
+(8952+1897+51)/17234 #  0.6324707
+
+```
+
+
+
+
 
 

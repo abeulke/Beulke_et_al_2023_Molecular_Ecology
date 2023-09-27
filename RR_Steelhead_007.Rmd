@@ -1,577 +1,246 @@
 ---
-title: "RR Steelhead 2007-2020, realtionship between number of offspring and other traits, additional Omy05 analyses, Notebook 7"
+title: "R Notebook"
 output: html_notebook
 ---
 
 ```{r}
+get_rxys <- function(data) {
+  d <- semi_join(rdat$gdata, data, by = c("V1" = "indiv"))
+  rxy1 <- related::coancestry(d, quellergt=1, allele.freqs = rdat$freqs)$relatedness %>%
+    as_tibble() %>%
+    select(ind1.id, ind2.id, quellergt) %>%
+    rename(ind1 = ind1.id, ind2 = ind2.id)
+  rxy2 <- rxy1[, c(2,1,3)] %>%
+    set_names(c("ind1", "ind2", "quellergt"))
+  
+  bind_rows(rxy1, rxy2)
+}
+```
+
+```{r}
+library(lubridate)
+
+day_fish_WS_1 <- spawn_rows %>%
+  mutate(spawn_date = mdy(spawn_date)) %>%
+  filter(hatchery == "Warm_Springs") %>% 
+  group_by(spawn_date) %>%
+  nest() %>%
+  arrange(spawn_date) %>%
+  mutate(num_fish = map_int(data, nrow))
+
+day_fish_CV_1 <- spawn_rows %>%
+  mutate(spawn_date = mdy(spawn_date)) %>%
+  filter(hatchery == "Coyote_Valley") %>% 
+  group_by(spawn_date) %>%
+  nest() %>%
+  arrange(spawn_date) %>%
+  mutate(num_fish = map_int(data, nrow))
+
+day_fish_WS_1
+day_fish_CV_1
+```
+
+```{r, eval=FALSE}
+rxys_in_days_WS_1 <- day_fish_WS_1 %>%
+  mutate(pairs = map(data, get_rxys))
+
+rxys_in_days_CV_1 <- day_fish_CV_1 %>%
+  mutate(pairs = map(data, get_rxys))
+```
+
+########
+
+```{r}
+rxys_in_days_WS_1 
+rxys_in_days_CV_1
+```
+
+```{r}
+#pairs has the rxy data, "quellergt"
+
+rxys_in_days_WS_1 %>% 
+  mutate(year = year(spawn_date)) %>% 
+  ungroup %>% 
+  count(year) %>% summarise(mean(n))
+#15.5 spawn days per year at Warm Springs
+
+rxys_in_days_CV_1 %>% 
+  mutate(year = year(spawn_date)) %>% 
+  ungroup %>% 
+  count(year) %>% summarise(mean(n))
+#14.1 spawn days per year at CV
+```
+
+```{r}
+trythis <- function(x,y){
+  a <- x %>%
+    filter(year == y)
+  
+  b <- a$pairs %>% flatten
+  mean_rxy <- a %>% 
+    summarise(y, mean_qgt = mean(b$quellergt), num_rxys_in_mean = n() )
+  
+  print(mean_rxy)
+}
+
+one <- rxys_in_days_WS_1 %>% 
+  mutate(year = year(spawn_date)) %>% 
+  ungroup 
+two <- rxys_in_days_CV_1 %>% 
+  mutate(year = year(spawn_date)) %>% 
+  ungroup 
+
+years_WS <- as.list(seq(2007,2020, 1))
+years_CV <- as.list(seq(2009,2020, 1))
+  
+  
+stuff <- map_dfr(years_WS, ~trythis(one,.x)) %>% mutate(hatchery = "Warm_Springs")
+
+stuff2 <-  map_dfr(years_CV, ~trythis(two,.x)) %>% mutate(hatchery = "Coyote_Valley")
+
+all_stuff <- bind_rows(stuff, stuff2)
+
+ggplot(all_stuff)+
+  geom_point(aes(x = y, y =mean_qgt, color = hatchery))+
+  geom_line(aes(x = y, y = mean_qgt, color = hatchery))+
+  scale_color_brewer(palette = "Dark2")+
+  scale_x_continuous(breaks=seq(2007,2020, 1))+
+  #ylim(-0.0035, 0)+
+  labs(title ="Annual mean relatedness of individuals spawned on the same day", y = "Mean relatedness among individuals")+
+  theme_classic()
+
+#write_rds(all_stuff, "annual_relatedness_by_spawn_day.rds")
+  
+```
+
+
+
+Trying to look at relatednes of pairs and number of offspring per pair
+
+```{r}
+trio_stuff <- read_csv("/Users/annebeulke/Documents/Russian-River-R/Russian-River/RR_2007-2020_pedigree_ages_lengths.csv")
+trio_stuff
+```
+
+
+```{r}
+rxys_in_days_WS_1$data 
+rxys_in_days_CV_1
+
+extract_observed_rxy <- function(tdf, rxyp) {
+  left_join(tdf, rxyp, by = c("pa" = "ind1", "ma" = "ind2"))
+}
+
+trio_stuff
+
+rxy_results_WS <- interm1_WS %>%
+  mutate(obs_rxy = map2(.x = trios, .y = rxy_pairs, .f = extract_observed_rxy))
+rxy_results_CV <- interm1_CV %>%
+  mutate(obs_rxy = map2(.x = trios, .y = rxy_pairs, .f = extract_observed_rxy)) 
+  
+rxy_results_CV
+rxy_results_WS
+
 library(tidyverse)
-
-Known_Sexes_fish_list <- read_csv("RR_steelhead_07-20_known_sexes.csv", col_names = T, cols(
-  indiv = col_character(),
-  year = col_character(),
-  spawner_group = col_character(),
-  hatchery = col_character(),
-  length = col_double(),
-  watershed = col_character(),
-  Wild = col_character(),
-  sex = col_character(),
-  new_sex = col_character()
-  ))
-Known_Sexes_fish_list <- Known_Sexes_fish_list %>% 
-  replace_with_na(replace = list(length = 203.2)) 
-
-RR_w_Omy <- read_csv("RR_2007-2020_Omy5_meta_pedigree.csv")
+offspring_nums <- read_csv("/Users/annebeulke/Documents/Russian-River-R/Russian-River/RR_offspring_num_per_pair.csv") %>% separate(., id, sep = ":", into = c("pa", "ma")) %>% select(-type)
+offspring_nums
 ```
-
-
-what proportion of indivdual male and females did not have offspring return and be sampled?
-```{r}
-Known_Sexes_fish_list %>% count(year)
-
-Potential_parents <- Known_Sexes_fish_list %>% 
-  separate(year, c("year1", "year2"), sep = ",") %>% 
-  filter(year1 < 2018) %>% 
-  filter(!is.na(new_sex))
-Potential_parents %>% count( new_sex)
-Potential_parents %>% distinct(indiv)
-#3757 mas
-#9837 pas
-
-Potential_parents %>% 
-  filter(new_sex == "Female") %>% 
-  inner_join(Known_Sex_Date_Ped, by = c("indiv" = "ma")) %>% 
-  distinct(indiv)
-#3078 mas with offspring
-3078/3757 # have offspring
-679/3757 # no offspring as broodstock
-
-Potential_parents %>% 
-  filter(new_sex == "Male") %>% 
-  inner_join(Known_Sex_Date_Ped, by = c("indiv" = "pa")) %>% 
-  distinct(indiv)
-#5239 pas with offspring
-5239/9837 # have offspring
-4598/9837 # no offspring as broodstock
-
-Known_Sexes_fish_list %>% count(new_sex)
-```
-
-Any commonalities between the females and males with no offspring returning? 
 ```{r}
 
-Potential_parents %>% 
-  filter(new_sex == "Female") %>% 
-  anti_join(Known_Sex_Date_Ped, by = c("indiv" = "ma")) %>%
-  count(year1)
-679/3757 # no offspring as broodstock
 
-Potential_parents %>% 
-  filter(new_sex == "Male") %>% 
-  anti_join(Known_Sex_Date_Ped, by = c("indiv" = "pa")) %>% 
-  count(year1)
-4598/9837 # no offspring as broodstock
+trythis2 <- function(rxy,offsp){
+  a <- rxy %>%
+    unnest(obs_rxy)
 
-#female and males without offspring represent all yeras
-
-Potential_parents %>% 
-  filter(new_sex == "Female") %>% 
-  anti_join(Known_Sex_Date_Ped, by = c("indiv" = "ma")) %>%
-  count(hatchery, year1)
-
-Potential_parents %>% 
-  filter(new_sex == "Male") %>% 
-  anti_join(Known_Sex_Date_Ped, by = c("indiv" = "pa")) %>%
-  count(hatchery, year1)
-
-
-potential_ma <- Potential_parents %>% 
-  filter(new_sex == "Female") %>% 
-  anti_join(Known_Sex_Date_Ped, by = c("indiv" = "ma"))
-potential_pa <- Potential_parents %>% 
-  filter(new_sex == "Male") %>% 
-  anti_join(Known_Sex_Date_Ped, by = c("indiv" = "pa"))
-
-potential_ma
-potential_pa
-```
-
-```{r}
-age <- Known_Sex_Date_Ped %>% select(kid, kid_age)
-
-potential_ma_age <- Potential_parents %>% 
-  filter(new_sex == "Female") %>% 
-  anti_join(Known_Sex_Date_Ped, by = c("indiv" = "ma")) %>%
-  left_join(age, by = c("indiv" = "kid")) %>% 
-  rename(age =  kid_age)
-
-potential_pa_age <- Potential_parents %>% 
-  filter(new_sex == "Male") %>% 
-  anti_join(Known_Sex_Date_Ped, by = c("indiv" = "pa")) %>%
-  left_join(age, by = c("indiv" = "kid")) %>% 
-  rename(age =  kid_age)
-
-potential_ma_none <- potential_ma_age %>% count(age) %>% 
-  filter(!is.na(age)) %>% 
-  mutate(freq = n/sum(n))
-
-potential_pa_none <- potential_pa_age %>% count(age) %>% 
-  filter(!is.na(age)) %>% 
-  mutate(freq = n/sum(n))
-
-potential_ma_none
-potential_pa_none
-
-```
-# compare the freq of ages of fish with and without offspring
-```{r}
-#parents with offsrping
-offspring_pa <- Kid_Pa_Ma_Age_Pair %>% 
-  filter(SpawnYear < 2018) %>% 
-  filter(new_pa_sex == "Male") %>% 
-  mutate(pair = paste(ma,pa , sep = "_")) %>% 
-  filter(!is.na(pa_age)) %>% 
-  distinct(pa, .keep_all = T) %>% 
-  count(pa_age) %>% 
-  mutate(freq = n/(sum(n)))
-
-offspring_ma <- Kid_Pa_Ma_Age_Pair %>% 
-  filter(SpawnYear < 2018) %>% 
-  filter(new_ma_sex == "Female") %>% 
-  mutate(pair = paste(ma,pa , sep = "_")) %>% 
-  filter(!is.na(ma_age)) %>% 
-  distinct(ma, .keep_all = T) %>% 
-  count(ma_age) %>% 
-  mutate(freq = n/(sum(n)))
+  b <- inner_join(a, offsp, by = c("pa", "ma"))
   
-offspring_pa
-offspring_ma
-#no check if significantly different with chi squared test
+  print(b)
+}
 
-chisq.test(x = potential_ma_none$n, p = offspring_ma$freq) #sig
-chisq.test(x = potential_pa_none$n, p = offspring_pa$freq) #sig
 
-```
-# trend with length?
-```{r}
-potential_ma_age %>% 
-  filter(!is.na(length)) %>% #344 with length data
-  ggplot()+
-  geom_histogram(aes(x = length, y = ..count..))
-potential_pa_age %>% 
-  filter(!is.na(length)) %>%  #2389 with length data
-  ggplot()+
-  geom_histogram(aes(x = length, y = ..count..))
-#dont see signs of a trend
-```
-
-# trend with omy05?
-```{r}
-omy <- RR_w_Omy %>% select(kid, kid_SH114448_types)
-indiv_date <- fishlist_age_spawnday %>% select(indiv, dayofyear)
-
-pot_ma_data <- potential_ma_age %>% 
-  left_join(omy, by = c("indiv" = "kid")) %>% 
-  left_join(indiv_date, by = "indiv" )
-
-pot_pa_data <- potential_pa_age %>% 
-  left_join(omy, by = c("indiv" = "kid")) %>% 
-  left_join(indiv_date, by = "indiv" )
-
-pot_ma_freq <- pot_ma_data %>% 
-  filter(!is.na(kid_SH114448_types), kid_SH114448_types != "NA_NA") %>% 
-  count(kid_SH114448_types) %>% 
-  mutate(freq = n/sum(n))
-
-pot_pa_freq <- pot_pa_data %>% 
-  filter(!is.na(kid_SH114448_types), kid_SH114448_types != "NA_NA") %>% 
-  count(kid_SH114448_types) %>% 
-  mutate(freq = n/sum(n))
-
-Kid_Pa_Ma_Age <- read_csv("RR_2007-2020_pedigree_ages.csv")
-Kid_Pa_Ma_Age_Pair <- Kid_Pa_Ma_Age %>%  mutate(pair = paste(pa, ma, sep = ":"))
-
-ma_omy_freq <- Kid_Pa_Ma_Age_Pair %>% 
-  left_join(omy, by = c("ma" = "kid")) %>% 
-  rename(ma_omy = kid_SH114448_types) %>% 
-  filter(new_ma_sex == "Female", SpawnYear < 2018) %>% 
-  filter(!is.na(ma_omy), ma_omy != "NA_NA") %>% 
-  distinct(ma, .keep_all = T) %>% 
-  count(ma_omy) %>% 
-  mutate(freq = n/sum(n))
-
-pa_omy_freq <- Kid_Pa_Ma_Age_Pair %>% 
-  left_join(omy, by = c("pa" = "kid")) %>% 
-  rename(pa_omy = kid_SH114448_types) %>% 
-  filter(new_pa_sex == "Male", SpawnYear < 2018) %>% 
-  filter(!is.na(pa_omy), pa_omy != "NA_NA") %>% 
-  distinct(pa, .keep_all = T) %>% 
-  count(pa_omy) %>% 
-  mutate(freq = n/sum(n))
-
-chisq.test(x = pot_ma_freq$n, p = ma_omy_freq$freq) #sig
-chisq.test(x = pot_pa_freq$n, p = pa_omy_freq$freq) #sig
-
-```
-
-# trend with spawn date? 
-```{r}
-pot_ma_data %>% 
-  ggplot()+
-  geom_bar(aes(x = dayofyear, y = ..count..))
-pot_pa_data %>% 
-  ggplot()+
-  geom_bar(aes(x = dayofyear, y = ..count..))
-
-Kid_Pa_Ma_Age_Pair %>% 
-  filter(SpawnYear < 2018, new_ma_sex == "Female") %>% 
-  distinct(ma, .keep_all = T) %>% 
-  ggplot()+
-  geom_bar(aes(x = parent_dayofyear, y = ..count..))
-
-Kid_Pa_Ma_Age_Pair %>% 
-  filter(SpawnYear < 2018, new_pa_sex == "Male") %>% 
-  distinct(pa, .keep_all = T) %>% 
-  ggplot()+
-  geom_bar(aes(x = parent_dayofyear, y = ..count..))
-```
-```{r}
-pot_ma_data %>% 
-  filter(!is.na(dayofyear)) %>% 
-  summarize(mean(as.numeric(dayofyear)), sd(as.numeric(dayofyear)))
-pot_pa_data %>% 
-  filter(!is.na(dayofyear)) %>% 
-  summarize(mean(as.numeric(dayofyear)), sd(as.numeric(dayofyear)))
-
-Kid_Pa_Ma_Age_Pair %>% 
-  filter(SpawnYear < 2018, new_ma_sex == "Female") %>% 
-  distinct(ma, .keep_all = T) %>% 
-  filter(!is.na(parent_dayofyear)) %>% 
-  summarize(mean(as.numeric(parent_dayofyear)), sd(as.numeric(parent_dayofyear)))
-
-Kid_Pa_Ma_Age_Pair %>% 
-  filter(SpawnYear < 2018, new_pa_sex == "Male") %>% 
-  distinct(pa, .keep_all = T) %>% 
-  filter(!is.na(parent_dayofyear)) %>% 
-  summarize(mean(as.numeric(parent_dayofyear)), sd(as.numeric(parent_dayofyear)))
-
-#no trend with spawn date
-```
-
-#lets look at Omy05 in siblings...
-```{r}
-
-sib_combos_x <- RR_w_Omy %>% 
-  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
-  slice_sample(prop = 1) %>% 
-  group_by(ppair, kid_age, new_kid_sex, kid_hatchery, kid_SH114448_types) %>% 
-  filter(n() != 1) %>% 
-  do(as_data_frame(t(combn(.$kid_dayofyear, m = 2)))) %>% 
-  rename(sib_1 = V1, sib_2 = V2) 
-
-sib_combos_x %>% 
-  filter(!is.na(new_kid_sex), new_kid_sex == "Female", kid_age == 3, kid_SH114448_types != "NA_NA") %>% 
-  ggplot()+
-  geom_count(aes(x = as.numeric(sib_1), y = as.numeric(sib_2), color = as.character(kid_SH114448_types)))+
-  coord_fixed(ratio = 1)+
-  theme_classic()+
-  geom_smooth(method = "lm", aes(x = as.numeric(sib_1), y = as.numeric(sib_2)), color = "#193439")+
-  scale_color_manual(values = c("#503143", "#79ad9f", "#9a532b", "#c49b60"))+
-  facet_grid(kid_SH114448_types~kid_hatchery)
   
-
-sib_combos_x %>% 
-  filter(!is.na(new_kid_sex), new_kid_sex == "Female", kid_age == 3, kid_hatchery == "Coyote_Valley", kid_SH114448_types == "A_A") %>% 
-  lm(as.numeric(sib_2) ~ as.numeric(sib_1), .) %>% 
-  summary
-
-sib_combos_x %>% 
-  filter(!is.na(new_kid_sex), new_kid_sex == "Female", kid_age == 3, kid_hatchery == "Warm_Springs", kid_SH114448_types == "A_A") %>% 
-  lm(as.numeric(sib_2) ~ as.numeric(sib_1), .) %>% 
-  summary
-
-sib_combos_x %>% 
-  filter(!is.na(new_kid_sex), new_kid_sex == "Female", kid_age == 3, kid_hatchery == "Warm_Springs", kid_SH114448_types == "A_R") %>% 
-  lm(as.numeric(sib_2) ~ as.numeric(sib_1), .) %>% 
-  summary
-
-sib_combos_x %>% 
-  filter(!is.na(new_kid_sex), new_kid_sex == "Female", kid_age == 3, kid_hatchery == "Coyote_Valley", kid_SH114448_types == "A_R") %>% 
-  lm(as.numeric(sib_2) ~ as.numeric(sib_1), .) %>% 
-  summary
-
-sib_combos_x %>% 
-  filter(!is.na(new_kid_sex), new_kid_sex == "Female", kid_age == 3, kid_hatchery == "Coyote_Valley", kid_SH114448_types == "R_R") %>% 
-  lm(as.numeric(sib_2) ~ as.numeric(sib_1), .) %>% 
-  summary
-
-sib_combos_x %>% 
-  filter(!is.na(new_kid_sex), new_kid_sex == "Female", kid_age == 3, kid_hatchery == "Warm_Springs", kid_SH114448_types == "R_R") %>% 
-  lm(as.numeric(sib_2) ~ as.numeric(sib_1), .) %>% 
-  summary
-
-```
-
-Want to see if the offspring of AR x AR parents are typically 25% AA, 50% AR and 25% RR
-Or, are more AA fish returning than RR fish? If so, this could mean the RR fish are staying in the river as residents
-
-```{r}
-omy_stuff <- RR_w_Omy %>% 
-  filter(SpawnYear < 2017) %>% 
-  filter(ma_SH114448_types == "A_R" & pa_SH114448_types == "A_R") %>% 
-  filter(kid_SH114448_types != "NA_NA") %>% 
-  count(kid_SH114448_types)
-
-omy_stuff
-```
-
-
-
-```{r}
-omy2 <- omy_stuff %>% 
-  mutate(n_exp = ifelse(kid_SH114448_types == "A_R", yes = (sum(n)*0.5), no = (sum(n)*0.25))) %>% 
-  rename(n_obs = n)
-
-omy2 %>% 
-  ggplot +
-  geom_col(aes(x = kid_SH114448_types, y = n_obs), fill = "red", alpha = 0.4) +
-  geom_col(aes(x = kid_SH114448_types, y = n_exp), fill = "blue", alpha = 0.4)
-
-obs <- c(296,759,300)
-exp <- c(0.25, 0.50, 0.25)
-chisq.test(obs, p = exp)
-#This means we REJECT the null hypothesis that the obs values = expected values
-# So this is support of the alternative hypothesis that the obs and expected are not equal
-
-```
-```{r}
-# AR parent age distributions
-RR_w_Omy %>% 
-  filter(SpawnYear < 2017) %>% 
-  filter(ma_SH114448_types == "A_R" & pa_SH114448_types == "A_R") %>% 
-  filter(!is.na(ma_age)) %>% 
-  count(ma_age) %>% 
-  mutate(freq = n/sum(n))
-
-RR_w_Omy %>% 
-  filter(SpawnYear < 2017) %>% 
-  filter(ma_SH114448_types == "A_R" & pa_SH114448_types == "A_R") %>% 
-  filter(!is.na(pa_age)) %>% 
-  count(pa_age) %>% 
-  mutate(freq = n/sum(n))
-```
-```{r}
-#offspring age distributions
-RR_w_Omy %>% 
-  filter(SpawnYear < 2017) %>% 
-  filter(ma_SH114448_types == "A_R" & pa_SH114448_types == "A_R") %>% 
-  filter(kid_SH114448_types != "NA_NA") %>%
-  filter(new_kid_sex == "Female") %>% 
-  count(kid_age) %>% 
-  mutate(freq = n/sum(n))
-
-RR_w_Omy %>% 
-  filter(SpawnYear < 2017) %>% 
-  filter(ma_SH114448_types == "A_R" & pa_SH114448_types == "A_R") %>% 
-  filter(kid_SH114448_types != "NA_NA") %>%
-  filter(new_kid_sex == "Male") %>% 
-  count(kid_age) %>% 
-  mutate(freq = n/sum(n))
-
-RR_w_Omy %>% 
-  filter(SpawnYear < 2017) %>% 
-  filter(ma_SH114448_types == "A_R" & pa_SH114448_types == "A_R") %>% 
-  filter(kid_SH114448_types != "NA_NA") %>%
-  filter(new_kid_sex == "Female") %>% 
-  count(kid_SH114448_types, kid_age) %>% 
-  group_by(kid_SH114448_types) %>% 
-  mutate(freq = n/sum(n))
-
-RR_w_Omy %>% 
-  filter(SpawnYear < 2017) %>% 
-  filter(ma_SH114448_types == "A_R" & pa_SH114448_types == "A_R") %>% 
-  filter(kid_SH114448_types != "NA_NA") %>%
-  filter(new_kid_sex == "Male") %>% 
-  count(kid_SH114448_types, kid_age) %>% 
-  group_by(kid_SH114448_types) %>% 
-  mutate(freq = n/sum(n))
-```
-
-
-```{r}
-woop <- RR_w_Omy %>% 
-  filter(SpawnYear < 2017) %>% 
-  filter(ma_SH114448_types == "A_R" & pa_SH114448_types == "A_R") %>% 
-  filter(kid_SH114448_types != "NA_NA")  %>% 
-  mutate(mid_parent_age = ((pa_age + ma_age)/2))
-
-
-woop %>% 
-  filter(kid_age == mid_parent_age) %>% 
-  ggplot()+
-  geom_point(aes(y = as.numeric(kid_dayofyear), x = as.numeric(parent_dayofyear), color = kid_SH114448_types))+
-  facet_grid(kid_SH114448_types ~ .)+
-  geom_smooth(method = "lm", aes(y = as.numeric(kid_dayofyear), x = as.numeric(parent_dayofyear)))
-
-
-woop %>% 
-  ggplot()+
-  geom_histogram(aes(x = kid_age, y = ..count.., color = kid_sex), position = "dodge")+
-  facet_grid(kid_hatchery ~ kid_SH114448_types)
-
-woop %>% 
-  ggplot()+
-  geom_histogram(aes(x = kid_age, y = ..count.., color = kid_sex), position = "dodge")+
-  facet_grid(. ~ kid_SH114448_types)
   
-m_f_omy <- woop %>% 
-  count(kid_sex, kid_SH114448_types) %>% 
-  rename(n_obs = n) %>% 
-  group_by(kid_sex) %>% 
-  mutate(n_exp = ifelse(kid_SH114448_types == "A_R", yes = (sum(n_obs)*0.5), no = (sum(n_obs)*0.25)))
-
-m_f_omy
-
-m_f_omy %>% 
-  ggplot +
-  geom_col(aes(x = kid_SH114448_types, y = n_obs), fill = "red", alpha = 0.4) +
-  geom_col(aes(x = kid_SH114448_types, y = n_exp), fill = NA, color = "blue")+
-  facet_wrap(~kid_sex)
-
-#females:
-fobs <- c(100,174,66)
-exp <- c(0.25, 0.50, 0.25)
-chisq.test(fobs, p = exp)
-#is sig diff from exp
-
-#males:
-mobs <- c(196,585,234)
-exp <- c(0.25, 0.50, 0.25)
-chisq.test(mobs, p = exp)
-#males returning are significantly different than the expected 
-  
+cv_qgt <- trythis2(rxy_results_CV, offspring_nums) %>% mutate(pair = str_c(pa, ma, sep = "_"))
+ws_qgt <- trythis2(rxy_results_WS, offspring_nums) %>% mutate(pair = str_c(pa, ma, sep = "_"))
 ```
 
 ```{r}
-m_f_omy2 <- woop %>% 
-  count(ma_hatchery, kid_sex, kid_SH114448_types) %>% 
-  rename(n_obs = n) %>% 
-  group_by(ma_hatchery,kid_sex) %>% 
-  mutate(n_exp = ifelse(kid_SH114448_types == "A_R", yes = (sum(n_obs)*0.5), no = (sum(n_obs)*0.25)))
+ws1 <- ws_qgt %>% 
+  group_by(pair) %>% 
+  filter(n > 1) %>% 
+  slice(1)
 
-m_f_omy2
+ws2 <- ws_qgt %>% 
+  group_by(pair) %>% 
+  filter(n <= 1) 
 
-m_f_omy2 %>% 
-  ggplot +
-  geom_col(aes(x = kid_SH114448_types, y = n_obs), fill = "red", alpha = 0.4) +
-  geom_col(aes(x = kid_SH114448_types, y = n_exp), fill = "blue", alpha = 0.4)+
-  facet_wrap(ma_hatchery~kid_sex)
+ws3 <- bind_rows(ws1,ws2)
 
-#CV females:
-cvfobs <- c(27, 52,23)
-exp <- c(0.25, 0.50, 0.25)
-chisq.test(cvfobs, p = exp)
-#not sig diff from exp
+cv1 <- cv_qgt %>% 
+  group_by(pair) %>% 
+  filter(n > 1) %>% 
+  slice(1)
 
-#WS females:
-wsfobs <- c(73,122,43)
-exp <- c(0.25, 0.50, 0.25)
-chisq.test(wsfobs, p = exp)
-#is sig diff from exp
+cv2 <- cv_qgt %>% 
+  group_by(pair) %>% 
+  filter(n <= 1) 
 
-#CV males:
-cvmobs <- c(63,178,79)
-exp <- c(0.25, 0.50, 0.25)
-chisq.test(cvmobs, p = exp)
-#not significantly different than the expected 
-
-#WS males:
-wsmobs <- c(133, 407, 155)
-exp <- c(0.25, 0.50, 0.25)
-chisq.test(wsmobs, p = exp)
-#is sig diff from exp
-  
-
-m_f_omy2 %>% 
-  filter(ma_hatchery == "Warm_Springs") %>% 
-  ggplot +
-  geom_col(aes(x = kid_SH114448_types, y = n_obs), fill = "red") +
-  geom_col(aes(x = kid_SH114448_types, y = n_exp), fill = NA, color = "blue")+
-  facet_wrap(ma_hatchery~kid_sex)
-
-
+cv3 <- bind_rows(cv1,cv2)
 ```
 
 ```{r}
-RR_w_Omy %>% 
-  count(kid_sex, kid_SH114448_types) %>% 
-  filter(kid_SH114448_types != "NA_NA") %>% 
-  group_by(kid_sex) %>% 
-  mutate(freq = n/(sum(n))) %>% 
+
+ggplot(data = ws3)+
+  geom_hex(aes(x = quellergt, y = n))+
+  labs(title = "Warm Springs", y ="Num Offspring per Pair", x = "rxy per pair")+
+  scale_y_continuous(breaks = (seq(0, 30, 2)))+
+  facet_wrap(~SpawnYear)
+
+ggplot()+
+  geom_hex(data = cv3, aes(x = quellergt, y = n))+
+  labs(title = "Coyote Valley", y ="Num Offspring per Pair", x = "rxy per pair")+
+  scale_y_continuous(breaks = (seq(0, 30, 1)))+
+  facet_wrap(~SpawnYear)
+
+ggplot()+
+  geom_point(data = ws3, aes(x = quellergt, y = n))+
+  labs(title = "Warm Springs", y ="Num Offspring per Pair", x = "rxy per pair")
+
+ggplot()+
+  geom_point(data = cv3, aes(x = quellergt, y = n))+
+  labs(title = "Coyote Valley", y ="Num Offspring per Pair", x = "rxy per pair")
+
+ggplot()+
+  geom_count(data = ws3, aes(x = quellergt, y = n))+
+  labs(title = "Warm Springs", y ="Num Offspring per Pair", x = "rxy per pair")
+
+ggplot()+
+  geom_count(data = cv3, aes(x = quellergt, y = n))+
+  labs(title = "Coyote Valley", y ="Num Offspring per Pair", x = "rxy per pair")
+
+ws3 %>% 
   ggplot()+
-  geom_col(aes(x = kid_SH114448_types, y = freq))+
-  facet_wrap(~kid_sex)
+  geom_hex(aes(x = quellergt, y = n))+
+  labs(title = "Warm Springs", y ="Num Offspring per Pair", x = "rxy per pair")+
+  scale_y_continuous(breaks = (seq(0, 30, 2)))
+  
+ggplot()+
+  geom_hex(data = cv3, aes(x = quellergt, y = n))+
+  labs(title = "Coyote Valley", y ="Num Offspring per Pair", x = "rxy per pair")+
+  scale_y_continuous(breaks = (seq(0, 30, 1)))
+
+
 ```
 
 ```{r}
-RR_w_Omy %>% 
-  mutate(parents = paste(ma, pa, sep = "_"), .after = pa) %>% 
-  filter(ma_SH114448_types == "A_R" & pa_SH114448_types == "A_R") %>% 
-  filter(kid_sex == "Female", kid_SH114448_types != "NA_NA") %>% 
-  count(parents) %>% 
-  arrange(desc(n))
+cv_qgt %>% filter(n > 15)
+ggplot()+
+  geom_count(aes(x = quellergt, y = n))
 
-RR_w_Omy %>% 
-  mutate(parents = paste(ma, pa, sep = "_"), .after = pa) %>% 
-  filter(ma_SH114448_types == "A_R" & pa_SH114448_types == "A_R") %>% 
-  filter(kid_sex == "Male", kid_SH114448_types != "NA_NA") %>% 
-  count(parents) %>% 
-  arrange(desc(n))
+ggplot()+
+  geom_count(data = cv_qgt, aes(x = quellergt, y = n))
 ```
 
-```{r}
-RR_w_Omy %>% 
-  mutate(parents = paste(ma, pa, sep = "_"), .after = pa) %>% 
-  filter(ma_SH114448_types == "A_R" & pa_SH114448_types == "A_R") %>% 
-  filter(parents == "M036463_M036461", kid_SH114448_types != "NA_NA") %>% 
-  count(kid_sex, kid_SH114448_types) %>% 
-  group_by(kid_sex) %>% 
-  mutate(freq = n/(sum(n)))
-```
 
-# want to look at spwan time and omy 5 afer agrouped by age
 
-```{r}
-Kid_Pa_Ma_Age_Pair
-kid_omy <- RR_w_Omy %>% 
-  select(kid, kid_SH114448_types)
-
-ped_omy <- Kid_Pa_Ma_Age_Pair %>% 
-  left_join(kid_omy, by = c("kid" = "kid")) %>% 
-  rename(kid_omy = kid_SH114448_types) %>% 
-  filter(!is.na(kid_omy), kid_omy != "NA_NA", kid_age < 5)
-```
-
-#now that the data is ready, looking at the omy5 and spawn date by age group
-```{r}
-ped_omy %>% 
-  group_by(kid_age) %>% 
-  count(new_kid_sex, kid_omy)
-
-ped_omy %>% 
-  filter(as.numeric(kid_dayofyear) < 200) %>% 
-  ggplot()+
-  geom_histogram(aes(x= as.numeric(kid_dayofyear), y = ..count.., binwidth = 5)) +
-  facet_grid(kid_age ~ kid_omy)
-
-ped_omy %>% 
-  filter(as.numeric(kid_dayofyear) < 200) %>% 
-  group_by(kid_age, kid_omy) %>% 
-  summarize(mean(as.numeric(kid_dayofyear)), sd(as.numeric(kid_dayofyear)))
-
-ped_omy %>% 
-  filter(as.numeric(kid_dayofyear) < 200) %>% 
-  filter(!is.na(new_kid_sex)) %>% 
-  group_by(kid_age,  new_kid_sex, kid_omy) %>% 
-  summarize(mean(as.numeric(kid_dayofyear)), sd(as.numeric(kid_dayofyear)))
-```
 
