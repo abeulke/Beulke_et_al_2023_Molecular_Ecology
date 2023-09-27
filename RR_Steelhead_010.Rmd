@@ -1,0 +1,330 @@
+---
+title: "RR Steelhead, Animal Model Results, Notebook 10"
+output:
+  html_notebook: default
+  pdf_document: default
+---
+
+Animal model for age at maturity
+
+```{r}
+library(tidyverse)
+library(MCMCglmm)
+library(naniar)
+```
+The animal model was done on a computing cluster. The R script to run the model is "age_animal_model_genetic_corr.R" and the model was run six times as an array, following the script "age_animal_model_genetic_corr_array.sh"
+
+# Run 1
+```{r}
+# Run 1
+gen_corr_1 <- read_rds("animal_model/outputs/genetic_corr/RR_genetic_corr_01.rds")
+
+summary(gen_corr_1)
+
+```
+
+```{r}
+plot(gen_corr_1$Sol)
+plot(gen_corr_1$VCV)
+
+autocorr(gen_corr_1$Sol)
+autocorr.diag(gen_corr_1$Sol)
+
+posterior.heritability1.4.FEM <- gen_corr_1$VCV[, "new_kid_sexFemale:new_kid_sexFemale.animal"] /
+  (gen_corr_1$VCV[, "new_kid_sexFemale:new_kid_sexFemale.animal"] + gen_corr_1$VCV[, "ma"] +
+    gen_corr_1$VCV[, "SpawnYear"] + gen_corr_1$VCV[, "new_kid_sexFemale.units"])
+posterior.heritability1.4.MAL <- gen_corr_1$VCV[, "new_kid_sexMale:new_kid_sexMale.animal"] /
+  (gen_corr_1$VCV[, "new_kid_sexMale:new_kid_sexMale.animal"] + gen_corr_1$VCV[, "ma"] +
+    gen_corr_1$VCV[, "SpawnYear"] + gen_corr_1$VCV[, "new_kid_sexMale.units"])
+
+mean(posterior.heritability1.4.FEM)
+mean(posterior.heritability1.4.MAL)
+
+corr.gen <- gen_corr_1$VCV[,
+'new_kid_sexFemale:new_kid_sexMale.animal']/sqrt(gen_corr_1$VCV[,'new_kid_sexFemale:new_kid_sexFemale.animal']*gen_corr_1$VCV[,'new_kid_sexMale:new_kid_sexMale.animal'])
+
+mean(corr.gen)
+HPDinterval(corr.gen)
+```
+# Run 2
+```{r}
+# Run 2
+gen_corr_2 <- read_rds("animal_model/outputs/genetic_corr/RR_genetic_corr_02.rds")
+
+summary(gen_corr_2)
+```
+```{r}
+plot(gen_corr_2$Sol)
+plot(gen_corr_2$VCV)
+
+
+posterior.heritability1.4.FEM <- gen_corr_2$VCV[, "new_kid_sexFemale:new_kid_sexFemale.animal"] /
+  (gen_corr_2$VCV[, "new_kid_sexFemale:new_kid_sexFemale.animal"] + gen_corr_2$VCV[, "ma"] +
+    gen_corr_2$VCV[, "SpawnYear"] + gen_corr_2$VCV[, "new_kid_sexFemale.units"])
+posterior.heritability1.4.MAL <- gen_corr_2$VCV[, "new_kid_sexMale:new_kid_sexMale.animal"] /
+  (gen_corr_2$VCV[, "new_kid_sexMale:new_kid_sexMale.animal"] + gen_corr_2$VCV[, "ma"] +
+    gen_corr_2$VCV[, "SpawnYear"] + gen_corr_2$VCV[, "new_kid_sexMale.units"])
+
+mean(posterior.heritability1.4.FEM)
+mean(posterior.heritability1.4.MAL)
+
+corr.gen <- gen_corr_2$VCV[,
+'new_kid_sexFemale:new_kid_sexMale.animal']/sqrt(gen_corr_2$VCV[,'new_kid_sexFemale:new_kid_sexFemale.animal']*gen_corr_2$VCV[,'new_kid_sexMale:new_kid_sexMale.animal'])
+
+mean(corr.gen)
+HPDinterval(corr.gen)
+```
+# Run 3
+```{r}
+# run 3
+gen_corr_3 <- read_rds("animal_model/outputs/genetic_corr/RR_genetic_corr_03.rds")
+
+summary(gen_corr_3)
+```
+```{r}
+plot(gen_corr_3$Sol)
+plot(gen_corr_3$VCV)
+
+
+posterior.heritability1.4.FEM <- gen_corr_3$VCV[, "new_kid_sexFemale:new_kid_sexFemale.animal"] /
+  (gen_corr_3$VCV[, "new_kid_sexFemale:new_kid_sexFemale.animal"] + gen_corr_3$VCV[, "ma"] +
+    gen_corr_3$VCV[, "SpawnYear"] + gen_corr_3$VCV[, "new_kid_sexFemale.units"])
+posterior.heritability1.4.MAL <- gen_corr_3$VCV[, "new_kid_sexMale:new_kid_sexMale.animal"] /
+  (gen_corr_3$VCV[, "new_kid_sexMale:new_kid_sexMale.animal"] + gen_corr_3$VCV[, "ma"] +
+    gen_corr_3$VCV[, "SpawnYear"] + gen_corr_3$VCV[, "new_kid_sexMale.units"])
+
+mean(posterior.heritability1.4.FEM)
+mean(posterior.heritability1.4.MAL)
+
+corr.gen <- gen_corr_3$VCV[,
+'new_kid_sexFemale:new_kid_sexMale.animal']/sqrt(gen_corr_3$VCV[,'new_kid_sexFemale:new_kid_sexFemale.animal']*gen_corr_3$VCV[,'new_kid_sexMale:new_kid_sexMale.animal'])
+
+mean(corr.gen)
+HPDinterval(corr.gen)
+```
+# Run 4
+```{r}
+gen_corr_4 <- read_rds("animal_model/outputs/genetic_corr/RR_genetic_corr_04.rds")
+
+summary(gen_corr_4)
+```
+```{r}
+plot(gen_corr_4$Sol)
+plot(gen_corr_4$VCV)
+
+
+posterior.heritability1.4.FEM <- gen_corr_4$VCV[, "new_kid_sexFemale:new_kid_sexFemale.animal"] /
+  (gen_corr_4$VCV[, "new_kid_sexFemale:new_kid_sexFemale.animal"] + gen_corr_4$VCV[, "ma"] +
+    gen_corr_4$VCV[, "SpawnYear"] + gen_corr_4$VCV[, "new_kid_sexFemale.units"])
+posterior.heritability1.4.MAL <- gen_corr_4$VCV[, "new_kid_sexMale:new_kid_sexMale.animal"] /
+  (gen_corr_4$VCV[, "new_kid_sexMale:new_kid_sexMale.animal"] + gen_corr_4$VCV[, "ma"] +
+    gen_corr_4$VCV[, "SpawnYear"] + gen_corr_4$VCV[, "new_kid_sexMale.units"])
+
+mean(posterior.heritability1.4.FEM)
+mean(posterior.heritability1.4.MAL)
+
+corr.gen <- gen_corr_4$VCV[,
+'new_kid_sexFemale:new_kid_sexMale.animal']/sqrt(gen_corr_4$VCV[,'new_kid_sexFemale:new_kid_sexFemale.animal']*gen_corr_4$VCV[,'new_kid_sexMale:new_kid_sexMale.animal'])
+
+mean(corr.gen)
+HPDinterval(corr.gen)
+```
+# Run 5
+```{r}
+gen_corr_5 <- read_rds("animal_model/outputs/genetic_corr/RR_genetic_corr_05.rds")
+
+summary(gen_corr_5)
+```
+```{r}
+plot(gen_corr_5$Sol)
+plot(gen_corr_5$VCV)
+
+
+posterior.heritability1.4.FEM <- gen_corr_5$VCV[, "new_kid_sexFemale:new_kid_sexFemale.animal"] /
+  (gen_corr_5$VCV[, "new_kid_sexFemale:new_kid_sexFemale.animal"] + gen_corr_5$VCV[, "ma"] +
+    gen_corr_5$VCV[, "SpawnYear"] + gen_corr_5$VCV[, "new_kid_sexFemale.units"])
+posterior.heritability1.4.MAL <- gen_corr_5$VCV[, "new_kid_sexMale:new_kid_sexMale.animal"] /
+  (gen_corr_5$VCV[, "new_kid_sexMale:new_kid_sexMale.animal"] + gen_corr_5$VCV[, "ma"] +
+    gen_corr_5$VCV[, "SpawnYear"] + gen_corr_5$VCV[, "new_kid_sexMale.units"])
+
+mean(posterior.heritability1.4.FEM)
+mean(posterior.heritability1.4.MAL)
+
+corr.gen <- gen_corr_5$VCV[,
+'new_kid_sexFemale:new_kid_sexMale.animal']/sqrt(gen_corr_5$VCV[,'new_kid_sexFemale:new_kid_sexFemale.animal']*gen_corr_5$VCV[,'new_kid_sexMale:new_kid_sexMale.animal'])
+
+mean(corr.gen)
+HPDinterval(corr.gen)
+```
+# Run 6
+
+```{r}
+gen_corr_6 <- read_rds("animal_model/outputs/genetic_corr/RR_genetic_corr_06.rds")
+
+summary(gen_corr_6)
+```
+
+```{r}
+plot(gen_corr_6$Sol)
+plot(gen_corr_6$VCV)
+
+
+posterior.heritability1.4.FEM <- gen_corr_6$VCV[, "new_kid_sexFemale:new_kid_sexFemale.animal"] /
+  (gen_corr_6$VCV[, "new_kid_sexFemale:new_kid_sexFemale.animal"] + gen_corr_6$VCV[, "ma"] +
+    gen_corr_6$VCV[, "SpawnYear"] + gen_corr_6$VCV[, "new_kid_sexFemale.units"])
+posterior.heritability1.4.MAL <- gen_corr_6$VCV[, "new_kid_sexMale:new_kid_sexMale.animal"] /
+  (gen_corr_6$VCV[, "new_kid_sexMale:new_kid_sexMale.animal"] + gen_corr_6$VCV[, "ma"] +
+    gen_corr_6$VCV[, "SpawnYear"] + gen_corr_6$VCV[, "new_kid_sexMale.units"])
+
+mean(posterior.heritability1.4.FEM)
+mean(posterior.heritability1.4.MAL)
+
+corr.gen <- gen_corr_6$VCV[,
+'new_kid_sexFemale:new_kid_sexMale.animal']/sqrt(gen_corr_6$VCV[,'new_kid_sexFemale:new_kid_sexFemale.animal']*gen_corr_6$VCV[,'new_kid_sexMale:new_kid_sexMale.animal'])
+
+mean(corr.gen)
+HPDinterval(corr.gen)
+
+str(corr.gen)
+```
+# Can I join the data from the 6 runs and look for convergence between the different chains?
+```{r}
+# https://github.com/tmalsburg/MCMCglmm-intro
+
+library(parallel)
+
+all6_sol <- list(gen_corr_1$Sol, gen_corr_2$Sol, gen_corr_3$Sol, gen_corr_4$Sol, gen_corr_5$Sol, gen_corr_6$Sol)
+all6_sol <- do.call(mcmc.list, all6_sol)
+
+all6_vcv <- list(gen_corr_1$VCV, gen_corr_2$VCV, gen_corr_3$VCV, gen_corr_4$VCV, gen_corr_5$VCV, gen_corr_6$VCV)
+all6_vcv <- do.call(mcmc.list, all6_vcv)
+
+library(coda)
+
+par(mfrow=c(4,2), mar=c(2,2,1,2))
+gelman.plot(all6_sol, auto.layout=F)
+
+par(mfrow=c(8,2), mar=c(2, 1, 1, 1))
+plot(all6_sol, ask=F, auto.layout=F)
+##
+par(mfrow=c(4,2), mar=c(2,2,1,2))
+gelman.plot(all6_vcv, auto.layout=F)
+
+par(mfrow=c(8,2), mar=c(2, 1, 1, 1))
+plot(all6_vcv, ask=F, auto.layout=F)
+
+##
+# test for convergence, Gelman-Runin, its a ratio, want it near 1, maybe up to 1.1 or 1.2
+# https://bookdown.org/rdpeng/advstatcomp/monitoring-convergence.html#gelman-rubin-statistic
+
+gelman.diag(all6_sol)
+
+
+```
+```{r}
+# autocorrelation
+# "The plots below show for each parameter the autocorrelation as a function of the distance between samples. If the distance is 0, the autocorrelation is one because the correlation of a variable with itself is one. However, as the distance between samples increases the autocorrelation diminishes. We also see that the parameter for the intercept has much lower autocorrelation than the other parameters." - https://github.com/tmalsburg/MCMCglmm-intro
+
+plot.acfs <- function(x) {
+  n <- dim(x)[2]
+  par(mfrow=c(ceiling(n/2),2), mar=c(3,2,3,0))
+  for (i in 1:n) {
+    acf(x[,i], lag.max=100, main=colnames(x)[i])
+    grid()
+  }
+}
+plot.acfs(gen_corr_1$Sol)
+plot.acfs(gen_corr_1$VCV)
+```
+```{r}
+# need to get the model runs together to calculate the gentic correlations 
+# gen_corr_1$Sol, gen_corr_2$Sol, gen_corr_3$Sol, gen_corr_4$Sol, gen_corr_5$Sol, gen_corr_6$Sol
+
+tib_1 <- as_tibble(gen_corr_1$Sol)
+tib_2 <- as_tibble(gen_corr_2$Sol) 
+tib_3 <- as_tibble(gen_corr_3$Sol)
+tib_4 <- as_tibble(gen_corr_4$Sol)
+tib_5 <- as_tibble(gen_corr_5$Sol)
+tib_6 <- as_tibble(gen_corr_6$Sol)
+
+all_sol_tib <- bind_rows(tib_1,tib_2, tib_3, tib_4, tib_5, tib_6)
+
+vcv_list <- list(
+  tib_1 = as_tibble(gen_corr_1$VCV),
+  tib_2 = as_tibble(gen_corr_2$VCV), 
+  tib_3 = as_tibble(gen_corr_3$VCV),
+  tib_4 = as_tibble(gen_corr_4$VCV),
+  tib_5 = as_tibble(gen_corr_5$VCV),
+  tib_6 = as_tibble(gen_corr_6$VCV)
+)
+
+all_vcv_tib <- bind_rows(vcv_list, .id = "MCMC_Run")
+
+all_sol_tib
+all_vcv_tib
+```
+
+
+
+```{r}
+##
+#genetic correlation from the models grouped together?
+
+corr.gen.all <-  (all_vcv_tib[,'new_kid_sexFemale:new_kid_sexMale.animal']/sqrt(all_vcv_tib[,'new_kid_sexFemale:new_kid_sexFemale.animal']*all_vcv_tib[,'new_kid_sexMale:new_kid_sexMale.animal']))
+
+mean(corr.gen.all$'new_kid_sexFemale:new_kid_sexMale.animal')
+
+library(HDInterval)
+
+hdi(corr.gen.all)
+
+
+corr.gen.all %>% 
+  rename(f_m = 'new_kid_sexFemale:new_kid_sexMale.animal' ) %>% 
+  ggplot()+
+  geom_density(aes(x = f_m ))
+```
+
+```{r}
+#heritability from all the models grouped together
+
+herit_female_all <- all_vcv_tib[, "new_kid_sexFemale:new_kid_sexFemale.animal"] /
+  (all_vcv_tib[, "new_kid_sexFemale:new_kid_sexFemale.animal"] + all_vcv_tib[, "ma"] +
+    all_vcv_tib[, "SpawnYear"] + all_vcv_tib[, "new_kid_sexFemale.units"])
+
+herit_male_all <- all_vcv_tib[, "new_kid_sexMale:new_kid_sexMale.animal"] /
+  (all_vcv_tib[, "new_kid_sexMale:new_kid_sexMale.animal"] + all_vcv_tib[, "ma"] +
+    all_vcv_tib[, "SpawnYear"] + all_vcv_tib[, "new_kid_sexMale.units"])
+
+mean(herit_female_all$'new_kid_sexFemale:new_kid_sexFemale.animal')
+hdi(herit_female_all)
+
+herit_female_all %>% 
+  rename(f_f = 'new_kid_sexFemale:new_kid_sexFemale.animal' ) %>% 
+  ggplot()+
+  geom_density(aes(x = f_f ))
+
+mean(herit_male_all$'new_kid_sexMale:new_kid_sexMale.animal')
+hdi(herit_male_all)
+
+herit_male_all %>% 
+  rename(m_m = 'new_kid_sexMale:new_kid_sexMale.animal' ) %>% 
+  ggplot()+
+  geom_density(aes(x = m_m ))
+```
+effective sample size
+```{r}
+effectiveSize(herit_male_all)
+effectiveSize(herit_female_all)
+effectiveSize(corr.gen.all)
+```
+
+
+```{r}
+all_sol_tib
+all_vcv_tib
+
+all6_sol %>% summary()
+all6_vcv %>% summary()
+```
+

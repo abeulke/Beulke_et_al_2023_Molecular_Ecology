@@ -1,0 +1,392 @@
+---
+title: "Russian River analysis 2007-2020 in HatcheryPedAgree, Notebook 2"
+subtitle: "First attempt of identifying pedigrees"
+output: html_notebook
+---
+
+Load HatcheryPedAgree Package
+```{r, eval = FALSE}
+library(remotes)
+remotes::install_github("eriqande/HatcheryPedAgree")
+```
+
+
+## Matching samples
+
+```{r}
+library(tidyverse)
+library(HatcheryPedAgree)
+library(naniar)
+
+
+rrsh_genotypes <- read_rds("RR_steelhead_2007-2020_geno.rds")
+rrsh_metadata <- read_rds("RR_steelhead_2007-2020_meta.rds")
+rrsh_metadata %>% count(sex)
+```
+
+
+## Missing Data, rubias, and all of HatcheryPedAgree, needs "NA" instead of 0 as missing data
+
+```{r}
+rrsh_genotypes %>% arrange(allele_int) # so I need to change the 0 to NA
+
+genos_na <- rrsh_genotypes %>% replace_with_na(replace = list(allele_int = 0))
+
+genos_na %>% arrange(allele_int) #zeros are gone
+genos_na %>% filter(is.na(allele_int)) #NAs instead of zeros
+```
+
+```{r}
+miss_dsn <- genos_na %>%
+  group_by(indiv) %>%
+  summarise(
+    num_all_loci = n() / 2,  # double check to make sure each gene copy is explicitly listed as NA
+    num_non_miss_loci = sum(!is.na(allele_int)) / 2)
+
+count(miss_dsn, num_all_loci)  # good.  Everyone has 94 loci (even if some are missing)
+
+full_histo <- ggplot(miss_dsn, aes(x = num_non_miss_loci)) +
+  geom_histogram(binwidth = 1)
+full_histo
+```
+
+
+```{r}
+#missing datat for rubias is "NA"
+# first time through, just get the distribution of matching proportions
+for_histo <- find_matching_samples(genos_na, min_frac_matching = 0.8, return_clusters = TRUE)
+#0.59% of allelic data identified as missing
+
+for_histo$pairs
+for_histo$clusters #820 clusters
+for_histo$aliases
+
+# check the distribution
+matching_data <- for_histo$pairs %>%
+  mutate(frac_match = num_match / num_non_miss)
+
+ggplot(data = matching_data, aes(x = frac_match)) +
+  geom_histogram(binwidth = 0.01)+
+  scale_x_continuous(breaks = seq(0.80,1.0,0.01))+
+  theme(axis.text.x = element_text(angle = 45,  hjust=1))
+
+matching_data #1077 pairs at 80% match
+
+write_csv(matching_data, "RR_2007-2020_MSA.csv")
+```
+Now I want to attach some meta data for indiv_1 and indiv_2 to the matching sample analyses to check the output
+```{r}
+rrsh_metadata
+matching_data
+
+ind_one <- rrsh_metadata %>% 
+  setNames(paste0("indiv_1_", names(.))) %>% 
+  rename(indiv_1 = indiv_1_indiv)
+ind_two <- rrsh_metadata %>% 
+  setNames(paste0("indiv_2_", names(.))) %>% 
+  rename(indiv_2 = indiv_2_indiv)
+
+match_data_meta <- matching_data %>% 
+  left_join(ind_one, by = "indiv_1") %>% 
+  left_join(ind_two, by = "indiv_2")
+
+match_data_meta
+
+write_csv(match_data_meta, "RR_2007-2020_MSA_meta.csv")
+```
+
+
+Now following the first part of the reorganize_matching_samples script to get the count of discrepancies
+To do this, I want the 94.7% matches and above, based on the histogram above. I want to look at the discrepancies within the pairs that are likely the same animals
+note: I tried getting the count_discrepancies results for for_histo (min fraction matchin 0.8) but there were issues with the clusters being so large and having too many clusters that were relatives instead of duplicate genomes, so needed to narrow the range to get the function to work properly. 
+```{r}
+find_disc <- find_matching_samples(genos_na, min_frac_matching = 0.92, return_clusters = TRUE)
+
+find_disc$clusters
+genotypes <- genos_na
+metadata <- rrsh_metadata
+clusters <- find_disc$clusters
+
+
+#below is the code from "reoranzie_matching_samples.r" that I followed to get the count of discrepancies
+#####
+ # make sure that NA spawner groups are coded as ?
+  metadata <- metadata %>%
+    mutate(spawner_group = ifelse(is.na(spawner_group), "?", spawner_group))
+
+  # figure out which individual to take for each cluster.
+  # It will be the one with the most non-missing genotypes and, in case
+  # of a tie, the one taken will be pretty much arbitrary.  Note that
+  # if there are any IDs in genotypes or clusters that are not in meta data this will
+  # cause a problem.  So, we semijoin on the metadata at the end.
+  ids_key <- genotypes %>%
+    semi_join(clusters, by = "indiv") %>%
+    group_by(indiv) %>%
+    summarise(num_good_genos = sum(!is.na(allele_int) / 2)) %>%
+    left_join(clusters, ., by = "indiv") %>%
+    arrange(cluster, desc(num_good_genos)) %>%
+    group_by(cluster) %>%
+    dplyr::do(tibble(retained_id = .$indiv[1], original_id = .$indiv)) %>%
+    ungroup() %>%
+    semi_join(metadata, by = c("original_id" = "indiv"))
+
+ # now, we attach that result to the meta data
+  matchers_meta <- ids_key %>%
+    left_join(metadata, by = c("original_id" = "indiv"))
+
+  # use the matching pairs, thus organized, to compute some reports about
+  # genotype discordance, etc.
+  geno_discord <- count_discrepancies(
+    pairs = matchers_meta,
+    genotypes = genotypes
+  )
+####
+  
+names(geno_discord)
+
+geno_discord$matching_samples_genos
+
+geno_discord$genotype_discrepancies_summary %>%  select(locus) %>%  unique()
+#this displays the results for all 94 loci
+geno_discord$genotype_discrepancies_summary %>% filter(num_discrepant_gene_copies > 0)
+#note: fract = n / sum(n),
+#      gc_wtd_fract = sum(fract * num_discrepant_gene_copies)
+#so the gc_wtd_fract gives higher weight to homoz switches and the loci are ordered based on this score
+
+geno_discord$alt_homoz_mismatches %>% select(locus) %>% unique()
+
+```
+
+##The clear break from 94.7% match to 89% match will be the cutoff point for us to consider a matched pair to be the sample fish
+
+
+##Min fraction matching  = 0.94
+```{r}
+# get the clusters of matching genotypes each indvidual belongs to
+for_real <- find_matching_samples(genos_na, min_frac_matching = 0.94, return_clusters = TRUE)
+# we will end up using the identified clusters
+for_real$clusters
+names(for_real)
+for_real$pairs
+for_real$aliases
+
+```
+
+##Reorganize matching samples, remove homoz/homoz switches, count discrepancies
+## Reorganizing for SNPPIT
+
+At this point, `for_real$clusters` is the tibble we need to re-organize our genotypes and meta-data
+for SNPPIT.  For every cluster of matching samples we will use, as the genotype, the
+sample with the least missing data.  We will also use the sex of that individual (sometimes
+there are mismatches in the sex of the matching genotypes).  Sometimes there are mismatches in
+the hatchery of the matching genotypes.  In those cases, each separate hatchery gets its own
+canonical individual named as the ID of the main canonical individual with the hatchery
+name appended to it.  The following function takes care of this and reorganizes both the
+genotypes and also the meta data into `snppit_genos` and `snppit_meta` (as well as a few other list
+components).
+```{r}
+#Need to make sure the spawner_group column is set to "date" and not "Character"  
+rrsh_metadata$spawner_group <-  format(rrsh_metadata$spawner_group, "%m/%d/%y")
+#need to get date with slashes instead of dashes
+
+reorg <- reorganize_matching_samples(genotypes = genos_na, metadata = rrsh_metadata , clusters = for_real$clusters)
+#Some matching genotypes found in different hatcheries. See cross_hatchery_matches in output.
+#Some matching genotypes found to have different sexes. See cross_sex_matches in output.
+#Rendered 21 genotypes NA because of mismatching homozygotes in the matching samples analysis
+
+```
+
+```{r}
+names(reorg)
+reorg$matchers_metadata %>% filter(is.na(new_id))
+reorg$cross_hatchery_matches
+reorg$cross_sex_matches
+
+write_csv(reorg$matchers_metadata, "RR_matchers_metadata.csv")
+write_csv(reorg$cross_hatchery_matches, "RR_cross_hatchery_matches.csv")
+write_csv(reorg$cross_sex_matches, "RR_cross_sex_matches.csv")
+
+reorg$snppit_meta %>% filter(is.na(indiv))
+reorg$snppit_genos 
+
+reorg$snppit_genos %>% distinct(indiv)
+save(reorg, file = "reorg_genos_meta.rda")
+```
+
+
+
+
+Let's have a look at some of the different components of that output.
+
+### `matchers_metadata`
+
+This is the meta data for all the matching genotypes.  Column `original_id` shows what they
+were named on input, and column `new_id` shows the ID used to identify them now in the
+SNPPIT-ready output.
+```{r}
+reorg$matchers_metadata
+
+```
+
+### `snppit_meta` and `snppit_genos`
+
+These are the tibbles that are ready to pass into `prepare_snppit_infile()`.  Multiple
+years and spawner_groups of the matching individuals have been lumped into
+comma-separated strings for the year and spawner group inputs to SNPPIT.
+
+### `cross_hatchery_matches` 
+
+A tibble that shows you which clusters of matching genotypes included fish from more
+than one hatchery.
+```{r}
+reorg$cross_hatchery_matches
+```
+
+### `cross_sex_matches` 
+
+A tibble that shows you which clusters of matching genotypes included fish with more than
+one reported sex
+```{r}
+reorg$cross_sex_matches
+
+```
+
+
+## Prepare a SNPPIT infile and run it
+
+We have rolled these two steps into a single run_snppit() function.
+
+Internally, it calls `prepare_snppit_infile()` to write the data,
+and then it runs `snppit` inside the `system()` command.
+
+##Running SNPPIT, constrained by sex and date (sad)
+```{r, eval = FALSE}
+snppit_sad <- run_snppit(reorg$snppit_genos, reorg$snppit_meta)
+snppit_sad
+results_sad <- slurp_snppit(snppit_sad, reorg$snppit_meta) 
+write_rds(results_sad, file = "../outputs/RR_SAD_results.rds", compress = "xz")
+```
+
+Each run of SNPPIT will have slightly different results. We have provided the results used in the paper. 
+```{r}
+#first run of SNPPIT
+results_sad <- read_tsv("RR_SAD_results_1.tsv")
+
+filter_sad <- results_sad %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se") %>% 
+  arrange(FDR) %>% 
+  mutate(idx = 1:n())
+
+filter_sad
+
+ggplot(filter_sad, aes(x= idx, y = FDR))+
+  geom_point()
+  
+
+filter_sad_1 <- filter_sad %>% 
+  filter(FDR <= 0.01) %>% 
+  mutate(MI_list = str_split(MendIncLoci, ",")) %>% 
+  arrange(desc(MI.Trio))
+
+# Looking at the amount of Mendelian incompatibilities in the parent-offspring trios from SNPPIT
+
+filter_sad_1 %>%   
+  count(MendIncLoci) %>% 
+  arrange(desc(n))  %>% 
+  ggplot()+ 
+  geom_histogram(aes(x = n), binwidth = 1)+
+  xlim(0,400)
+
+filter_sad_1 %>% 
+  arrange(desc(MI.Trio)) %>% 
+  count(MI.Trio)
+
+filter_sad_1 %>% 
+  arrange(desc(MI.Trio)) %>% 
+  count(MI.Trio) %>% 
+  summarize(sum(n))
+
+df <-  plyr::ldply(filter_sad_1$MI_list, rbind)
+MI_data <- df %>% 
+  pivot_longer(c(1,2,3,4), names_to = "MI_col", values_to = "MI") %>% 
+  count(MI) %>% 
+  arrange(desc(n)) %>% 
+  filter(!is.na(MI))
+MI_data
+
+ggplot(data = MI_data)+ 
+  geom_histogram(aes(x = n), binwidth = 1)
+
+MI_data$n <- as.numeric(MI_data$n)
+MI_data %>%
+  mutate(freq = n/sum(n)) %>% 
+  mutate(percent = freq*100)
+```
+
+
+## Then do an unconstrained or "noSAD" run
+
+```{r, eval = FALSE}
+snppit_noSAD <- run_snppit(
+  reorg$snppit_genos, 
+  reorg$snppit_meta, 
+  use_spawner_group = FALSE,
+  use_sex = FALSE
+  )
+results_no_sad <- slurp_snppit(snppit_noSAD, reorg$snppit_meta)
+write_rds(results_no_sad, file = "../outputs/RR_no_SAD_results.rds", compress = "xz")
+```
+
+```{r}
+# unconstrained SNPPIT run
+
+results_no_sad <- read_tsv("RR_noSAD_results_1.tsv")
+
+filter_nosad <- results_no_sad %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se") %>% 
+  arrange(FDR) %>% 
+  mutate(idx = 1:n())
+
+ggplot(filter_nosad, aes(x= idx, y = FDR))+
+  geom_point()
+  
+filter_nosad_1 <- filter_nosad %>% 
+  filter(FDR <= 0.01) %>% 
+  mutate(MI_list = str_split(MendIncLoci, ",")) %>% 
+  arrange(desc(MI.Trio))
+
+filter_nosad_1 %>%   
+  count(MendIncLoci) %>% 
+  arrange(desc(n))  %>% 
+  ggplot()+ 
+  geom_histogram(aes(x = n), binwidth = 1)+
+  xlim(0,400)
+
+
+df1 <-  plyr::ldply(filter_nosad_1$MI_list, rbind)
+MI_data_1 <- df1 %>% 
+  pivot_longer(c(1,2,3,4), names_to = "MI_col", values_to = "MI") %>% 
+  count(MI) %>% 
+  arrange(desc(n)) %>% 
+  filter(!is.na(MI))
+MI_data_1
+
+ggplot(data = MI_data_1)+ 
+  geom_histogram(aes(x = n), binwidth = 1)
+
+MI_data_1 %>%
+  mutate(freq = n/sum(n)) %>% 
+  mutate(percent = freq*100)
+```
+
+Removing 7 SNPs that have Mendelian incompatibilies in more 2% or more of the parent-offspring trios in both the constrained and unconstrained SNPPIT results. 
+
+Will Remove: 
+  * SH109243-222
+  * OMY_PEPA-INT6
+  * SH128851-273
+  * SH120950-569
+  * SH110201-359
+  * SH131965-120
+  * SH97954-618
+  

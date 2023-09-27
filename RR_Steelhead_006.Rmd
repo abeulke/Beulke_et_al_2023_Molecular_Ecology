@@ -1,0 +1,694 @@
+---
+title: "RR Steelhead 2007-2020, correlations with Omy05, Notebook 6"
+output: html_notebook
+---
+
+Looking for correlations between Omy5 loci and various traits
+
+OMY_R04944 and SH114448-87 are associated with the Omy05 inversion
+#Omy-R04944 was genotyped 2015 through 2020, so I will only use SH114448-87
+A = 4 #anadromous/ancestral
+R = 2 #resident/recent
+
+SH114448-87
+A = 3 #anadromous/ancestral
+R = 1 #resident/recent
+```{r}
+library(tidyverse)
+library(RColorBrewer)
+library(naniar)
+library(lubridate)
+
+Known_Sexes_fish_list <- read_csv("RR_steelhead_07-20_known_sexes.csv", col_names = T, cols(
+  indiv = col_character(),
+  year = col_character(),
+  spawner_group = col_character(),
+  hatchery = col_character(),
+  length = col_double(),
+  watershed = col_character(),
+  Wild = col_character(),
+  sex = col_character(),
+  new_sex = col_character()
+  ))
+Known_Sexes_fish_list <- Known_Sexes_fish_list %>% 
+  replace_with_na(replace = list(length = 203.2)) %>% 
+  separate(spawner_group, c("sg_1", "sg_2", "sg_3"), sep = ",") %>% 
+  separate(year, c("year1", "year2"), sep = ",") %>% 
+  mutate(date = mdy(sg_1)) %>% 
+  mutate(dayofyear = strftime(date, format = "%j")) %>% 
+  select(indiv, year1, sg_1, dayofyear, everything()) 
+
+wide_genos_rm7 <- read_csv("RR_2007-2020_wide_genos_rm7_before_msa.csv") %>%  
+  rename(indiv = NMFS_DNA_ID)
+
+fish_list_geno_meta <- left_join(Known_Sexes_fish_list, wide_genos_rm7, by = "indiv")
+
+fish_list_geno_meta %>% select(contains("SH114448"))
+
+Known_Sexes_itero <- read_csv("RR_itero_known_sexes.csv")
+Known_Sex_Date_Ped <- read_csv("RR_pedigree_07-20_known_sexes_and_dates.csv")
+age <- Known_Sex_Date_Ped %>% select(kid, kid_age) %>% rename(indiv = kid, age = kid_age)
+
+#okay now I want to add columns where A = ancestral (anadromous) and R = recent (resident) for the two loci
+Omy5.List <- fish_list_geno_meta %>% 
+  mutate(SH114448_type = ifelse(.$'SH114448-87' == "3", yes = "A", no = (ifelse(.$'SH114448-87' == "1", yes = "R", no = "NA")))) %>% 
+  mutate(SH114448_type2 = ifelse(.$'SH114448-87_1' == "3", yes = "A", no = (ifelse(.$'SH114448-87_1' == "1", yes = "R", no = "NA")))) %>% 
+  unite(SH114448_types, SH114448_type, SH114448_type2, sep = "_") %>%
+  left_join(age, by = "indiv") %>% 
+  select(indiv, SH114448_types, 'SH114448-87','SH114448-87_1', age, everything()) 
+
+Omy5.List$SH114448_types <- recode(Omy5.List$SH114448_types, R_A = "A_R")
+Omy5.List %>% count(SH114448_types)
+
+Omy5.List # this now has A and R for the different karyotypes of Omy5
+write_csv(Omy5.List, "RR_2007-2020_Omy5_fish_list.csv")
+
+Omy5only <- Omy5.List %>% select(indiv, SH114448_types)
+k <- Omy5.List %>% select(indiv, SH114448_types) %>% rename(kid = indiv, kid_SH114448_types = SH114448_types )
+m <- Omy5.List %>% select(indiv, SH114448_types) %>% rename(ma = indiv, ma_SH114448_types = SH114448_types )
+p <- Omy5.List %>% select(indiv, SH114448_types) %>% rename(pa = indiv, pa_SH114448_types = SH114448_types )
+```
+
+
+```{r}
+Kid_Pa_Ma_Age <- read_csv("RR_2007-2020_pedigree_ages.csv", col_names = T, cols(
+  kid = col_character(),
+  ma = col_character(),
+  pa = col_character(),
+  kid_dayofyear = col_character(),
+  parent_dayofyear = col_character(),
+  parent_sg = col_character(),
+  pa_sg = col_character(),
+  ma_sg = col_character(),
+  kid_sex = col_character(),
+  new_kid_sex = col_character(),
+  pa_sex = col_character(),
+  new_pa_sex = col_character(),
+  ma_sex = col_character(),
+  new_ma_sex = col_character(),
+  SpawnYear = col_double(),
+  kid_year = col_double(),
+  kid_year2 = col_double(),
+  pa_year = col_double(),
+  ma_year = col_double(),
+  kid_sg = col_character(),
+  kid_hatchery = col_character(),
+  pa_hatchery = col_character(),
+  ma_hatchery = col_character(),
+  OffspCollection = col_character(),
+  PopName = col_character(),
+  FDR = col_double(),
+  Pvalue = col_double(),
+  LOD = col_double(),
+  P.Pr.C_Se_Se = col_double(),
+  P.Pr.Max = col_double(),
+  MaxP.Pr.Relat = col_character(),
+  TotPaNonExc = col_double(),
+  TotMaNonExc = col_double(),
+  TotUnkNonExc = col_double(),
+  TotPairsMendCompat = col_double(),
+  TotPairsMendAndLogL = col_double(),
+  TotParsMendLoglAndRank = col_double(),
+  TotPairsNonExc = col_double(),
+  KidMiss = col_double(),
+  PaMiss = col_double(),
+  MaMiss = col_double(),
+  MI.Kid.Pa = col_double(),
+  MI.Kid.Ma = col_double(),
+  MI.Trio = col_double(),
+  MendIncLoci = col_character(),
+  kid_age = col_double(),
+  new_parent_sg = col_date(format = ""),
+  new_kid_sg = col_date(format = ""),
+  pa_age = col_double(),
+  ma_age = col_double()
+))
+spec(Kid_Pa_Ma_Age)  
+```
+
+```{r}
+RR_w_Omy <- Kid_Pa_Ma_Age %>% 
+  left_join(k, by = "kid") %>% 
+  left_join(m, by = "ma") %>% 
+  left_join(p, by = "pa")
+
+RR_w_Omy
+
+RR_w_Omy %>% 
+  group_by(new_kid_sex) %>% 
+  filter(kid_SH114448_types != "NA_NA", !is.na(new_kid_sex)) %>% 
+  count(kid_SH114448_types)
+```
+##
+```{r}
+bing <- RR_w_Omy %>% 
+  count(new_kid_sex, kid_hatchery, ma_hatchery, pa_hatchery, kid_age, ma_age, pa_age, kid_SH114448_types, ma_SH114448_types, pa_SH114448_types)
+
+
+```
+
+##
+
+SH11448-87
+A = 3
+R = 1
+```{r}
+Omy5.List
+RR_w_Omy 
+write_csv(RR_w_Omy, "RR_2007-2020_Omy5_meta_pedigree.csv")
+```
+
+
+
+```{r}
+ggplot(data = RR_w_Omy)+
+  geom_count(mapping = aes(x = kid_age, y = kid_SH114448_types))+
+  facet_wrap(~new_kid_sex)
+```
+
+```{r}
+chisq.test(x = RR_w_Omy$kid_age, y = RR_w_Omy$kid_SH114448_types)
+chisq.test(x= RR_w_Omy$new_kid_sex, y = RR_w_Omy$kid_SH114448_types)
+chisq.test(x = RR_w_Omy$kid_dayofyear, y = RR_w_Omy$kid_SH114448_types)
+```
+```{r}
+ggplot(data = RR_w_Omy)+
+  geom_count(mapping = aes(x = as.numeric(kid_dayofyear), y = kid_SH114448_types))+
+  facet_wrap(~kid_sex)
+```
+
+ˆ
+```{r}
+RR_w_Omy_rm_5yr_dec_na <- RR_w_Omy %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age < 5) %>% 
+  filter(kid_SH114448_types != "NA_NA")
+
+RR_w_Omy_rm_5yr_dec_na %>% 
+  ggplot()+
+  geom_count(mapping = aes(x = as.numeric(kid_dayofyear), y = kid_SH114448_types))+
+  facet_wrap(~new_kid_sex)
+RR_w_Omy_rm_5yr_dec_na %>% 
+  ggplot()+
+  geom_boxplot(mapping = aes(x = as.numeric(kid_dayofyear), y = kid_SH114448_types))+
+  facet_grid(kid_age~new_kid_sex)
+
+fem <- RR_w_Omy_rm_5yr_dec_na %>% filter(new_kid_sex == "Female")
+fem
+mal <- RR_w_Omy_rm_5yr_dec_na %>% filter(new_kid_sex == "Male")
+mal
+
+ggplot(data = fem)+
+  geom_density(mapping = aes(x =as.numeric(kid_dayofyear), fill = kid_SH114448_types), alpha = 0.3)+
+  facet_wrap(~kid_age)+
+  ggtitle("Females only")
+ggplot(data = mal)+
+  geom_density(mapping = aes(x =as.numeric(kid_dayofyear), fill = kid_SH114448_types), alpha = 0.3)+
+  facet_wrap(~kid_age)+
+  ggtitle("Males only")
+
+ggplot(data = fem)+
+  geom_density(mapping = aes(x =as.numeric(kid_dayofyear), fill = as.character(kid_age)), alpha = 0.3)+
+  facet_wrap(~kid_SH114448_types)+
+  ggtitle("Females only")
+ggplot(data = mal)+
+  geom_density(mapping = aes(x =as.numeric(kid_dayofyear), fill = as.character(kid_age)), alpha = 0.3)+
+  facet_wrap(~kid_SH114448_types)+
+  ggtitle("Males only")
+
+```
+
+```{r}
+#age and SH114448 type
+ggplot(data = RR_w_Omy_rm_5yr_dec_na)+
+  geom_boxplot(aes(x = kid_SH114448_types, y = kid_age))
+
+ggplot(data = RR_w_Omy_rm_5yr_dec_na)+
+  geom_density(aes(x = kid_age, fill = kid_SH114448_types), alpha = 0.3)
+
+
+omy_age <- ggplot(data = RR_w_Omy_rm_5yr_dec_na)+
+  geom_bar(aes(x = kid_age, y = ..prop.., fill = kid_SH114448_types), position = position_dodge2(reverse = TRUE))+
+  ylim(0,1.0)+
+  theme_classic()+
+  scale_fill_manual(values = c("#9a532b", "#79ad9f", "#503143"))+
+  ylab("Proportion")+
+  xlab("Age")+
+  guides(fill=guide_legend("Omy05", reverse = T))+
+  scale_x_continuous(breaks = c(2,3,4))
+omy_age
+
+omy_age_sex <- RR_w_Omy_rm_5yr_dec_na %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_bar(aes(x = kid_age, y = ..prop.., fill = kid_SH114448_types), position = position_dodge2(reverse = TRUE))+
+  facet_wrap(~new_kid_sex)+
+  ylim(0,1.0)+
+  theme_classic()+
+  scale_fill_manual(values = c("#9a532b", "#79ad9f", "#503143" ))+
+  ylab("Proportion")+
+  xlab("Age")+
+  guides(fill=guide_legend("Omy05", reverse=T))+
+  scale_x_continuous(breaks = c(2,3,4))
+omy_age_sex
+
+RR_w_Omy_rm_5yr_dec_na %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  group_by(new_kid_sex, kid_SH114448_types) %>% 
+  count(kid_age)
+
+kruskal.test(kid_SH114448_types ~ kid_age, data = RR_w_Omy_rm_5yr_dec_na)
+kruskal.test(kid_SH114448_types ~ kid_age, data = fem)
+kruskal.test(kid_SH114448_types ~ kid_age, data = mal)
+
+RR_w_Omy_rm_5yr_dec_na %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  count(new_kid_sex, kid_SH114448_types) %>% 
+  group_by(kid_SH114448_types) %>% 
+  ggplot()+
+  geom_col(aes( x = kid_SH114448_types, y = n))+
+  facet_wrap(~new_kid_sex)
+
+RR_w_Omy_rm_5yr_dec_na %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  count(new_kid_sex, kid_SH114448_types) %>% 
+  group_by(new_kid_sex) %>% 
+  mutate(prop = (n/sum(n)))
+  
+RR_w_Omy_rm_5yr_dec_na %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  count(new_kid_sex, kid_SH114448_types) %>% 
+  group_by(new_kid_sex) %>% 
+  mutate(prop = (n/sum(n))) %>% 
+  ggplot()+
+  geom_col(aes( x = kid_SH114448_types, y = prop))+
+  facet_wrap(~new_kid_sex)
+```
+ 
+```{r}
+omy_fill <- RR_w_Omy_rm_5yr_dec_na %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_bar(aes(x = kid_age, y = ..prop.., fill = kid_SH114448_types), position = "fill")+
+  facet_wrap(~new_kid_sex)+
+  ylim(0,1.0)+
+  theme_classic()+
+  scale_fill_manual(values = c("#9a532b", "#79ad9f", "#503143" ))+
+  ylab("Proportion")+
+  xlab("Age")+
+  guides(fill=guide_legend("Omy05"))+
+  geom_text(aes( x = kid_age, label = ..count.., y = ..prop..), stat = "count", position = position_fill(vjust = -0.05), size = 3)+
+  scale_y_continuous()
+omy_fill
+
+RR_w_Omy_rm_5yr_dec_na %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_bar(aes(x = kid_age, y = ..prop.., fill = kid_SH114448_types))+
+  facet_grid(kid_SH114448_types~new_kid_sex)+
+  ylim(0,1.0)+
+  theme_classic()+
+  scale_fill_manual(values = c("#9a532b", "#79ad9f", "#503143" ))+
+  ylab("Proportion")+
+  xlab("Age")+
+  guides(fill=guide_legend("Omy05"))+
+  geom_text(aes( x = kid_age, label = ..count.., y = ..prop..), stat = "count", position = position_fill(vjust = -0.05), size = 3)+
+  scale_y_continuous()
+omy_fill
+
+
+Omy5.List %>% 
+  filter(!is.na(new_sex), SH114448_types != "NA_NA") %>% 
+  group_by(new_sex) %>% 
+  count(SH114448_types) %>% 
+  mutate(freq = n/(sum(n)))
+
+```
+ 
+
+```{r}
+#how about AA/RR and length? 
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  ggplot()+
+  geom_count(aes(y = SH114448_types, x = length))
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>% 
+  ggplot()+
+  geom_count(aes(y = SH114448_types, x = length))+
+  facet_grid(as.character(age) ~ new_sex)
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  ggplot()+
+  geom_histogram(aes(x = length, ..density.., fill = SH114448_types), position = "dodge", binwidth = 25)+
+  scale_fill_brewer(palette = "Dark2")+
+  theme_classic()
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  ggplot()+
+  geom_histogram(aes(x = length, ..density.., fill = SH114448_types), position = "dodge", binwidth = 25)+
+  scale_fill_brewer(palette = "Dark2")+
+  theme_classic()+
+  facet_grid(age~.)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  ggplot()+
+  geom_histogram(aes(x = length, ..density.., fill = as.character(age)), position = "dodge", binwidth = 25)+
+  scale_fill_brewer(palette = "Dark2")+
+  theme_classic()+
+  facet_grid(SH114448_types~.)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  ggplot()+
+  geom_histogram(aes(x = length, ..density.., fill = SH114448_types), position = "dodge", binwidth = 25)+
+  scale_fill_brewer(palette = "Dark2")+
+  theme_classic()+
+  facet_grid(SH114448_types~.)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  kruskal.test(SH114448_types ~ length, data = .)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  group_by(SH114448_types) %>% 
+  count(age)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  group_by(SH114448_types) %>%
+  summarise(mean(age), sd(age), mean(length), sd(length), mean(as.numeric(dayofyear), na.rm = T), sd(as.numeric(dayofyear), na.rm = T))
+```
+
+```{r}
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  ggplot()+
+  geom_histogram(aes(x = length, ..density.., fill = SH114448_types), position = "dodge", binwidth = 25)+
+  scale_fill_brewer(palette = "Dark2")+
+  theme_classic()+
+  facet_grid(new_sex~.)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  filter(new_sex == "Female") %>% 
+  kruskal.test(SH114448_types ~ length, data = .)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  filter(new_sex == "Male") %>% 
+  kruskal.test(SH114448_types ~ length, data = .)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  filter(hatchery != "Coyote_Valley,Warm_Springs") %>% 
+  kruskal.test(SH114448_types ~ hatchery, data = .)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  filter(hatchery != "Coyote_Valley,Warm_Springs") %>% 
+  ggplot()+
+  geom_bar(aes(x = SH114448_types, y = ..count..))+
+  facet_wrap(~hatchery)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  filter(hatchery != "Coyote_Valley,Warm_Springs") %>% 
+  ggplot()+
+  geom_histogram(aes(x = length, ..density.., fill = SH114448_types), position = "dodge", binwidth = 25)+
+  scale_fill_brewer(palette = "Dark2")+
+  theme_classic()+
+  facet_grid(hatchery~.)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  ggplot()+
+  geom_density(aes(x = length, fill = SH114448_types), alpha = 0.3)+
+  facet_grid(as.character(age)~.)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  ggplot()+
+  geom_density(aes(x = length, fill = as.character(age)), alpha = 0.3)+
+  facet_grid(SH114448_types~.)
+
+```
+
+
+```{r}
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  ggplot()+
+  geom_density(aes(x = length, fill = SH114448_types), alpha = 0.3)+
+  facet_wrap(~age)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  ggplot()+
+  geom_histogram(aes(x =length, y=..count.., fill = SH114448_types),binwidth =50, position = "dodge")+
+  facet_wrap(~age)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  ggplot()+
+  geom_density(aes(x = length, fill = as.character(age)), alpha = 0.3)+
+  facet_wrap(~SH114448_types)
+
+Omy5.List %>% 
+  filter(!is.na(length)) %>%
+  filter(SH114448_types != "NA_NA") %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age <5) %>%
+  ggplot()+
+  geom_histogram(aes(x = length, y=..count.., fill = as.character(age)),binwidth =50, position = "dodge")+
+  facet_wrap(~SH114448_types)
+
+```
+
+Any connection to iteroparity?
+```{r}
+Known_Sexes_itero
+Omy5.List
+
+omy_itero <- Known_Sexes_itero %>% 
+  rename(indiv = kid) %>% 
+  left_join(Omy5.List, by = "indiv")
+
+omy_itero %>% count(SH114448_types)
+omy_itero %>%
+  count(SH114448_types, age)
+
+ggplot(omy_itero)+
+  geom_histogram(aes(x = as.numeric(dayofyear), y = ..count.., fill = SH114448_types))+
+  scale_fill_brewer(palette = "Dark2")+
+  facet_grid(SH114448_types~age)
+
+ggplot(omy_itero)+
+  geom_histogram(aes(x = length1, y = ..count.., fill = SH114448_types), position = "dodge")+
+  scale_fill_brewer(palette = "Dark2")
+ggplot(omy_itero)+
+  geom_histogram(aes(x = length2, y = ..count.., fill = SH114448_types), position = "dodge")+
+  scale_fill_brewer(palette = "Dark2")
+
+ggplot(omy_itero)+
+  geom_point(aes(x = date1_dayofyear, y = date2_dayofyear, color = SH114448_types))+
+  xlab("First Return Date (Day of Year)")+
+  ylab("Second Return Date (Day of Year)")+
+  geom_smooth(method = "lm", aes(x = date1_dayofyear, y = date2_dayofyear), color="#E7298A")+
+  theme_classic()+
+  scale_y_continuous(breaks = seq(0, 120, 15))+
+  scale_x_continuous(breaks = seq(0, 120, 15))+
+  scale_color_brewer(palette = "Dark2")
+  
+omy_itero
+
+```
+the itero fish seem to show the same general trends in larger populations
+```{r}
+Omy5.List %>% 
+  group_by(SH114448_types) %>% 
+  count()
+
+Omy5.List %>% 
+  group_by(SH114448_types) %>% 
+  filter(SH114448_types == "NA_NA")
+```
+
+
+```{r}
+RR_w_Omy
+Karyotype.Matrix <- RR_w_Omy %>% filter(kid_SH114448_types != "NA_NA", ma_SH114448_types != "NA_NA", pa_SH114448_types != "NA_NA") 
+Karyotype.Matrix 
+```
+Omy05 and age
+
+```{r}
+ggplot( data =Karyotype.Matrix)+
+  geom_count(aes(x = kid_SH114448_types, y = pa_SH114448_types))+
+  scale_size_area()
+
+
+o_a_s <- Omy5.List %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age < 5) %>% 
+  filter(SH114448_types != "NA_NA") %>% 
+  ggplot()+
+  geom_bar(aes(x=age, y = ..prop.., fill = new_sex), position = "dodge")+
+  ylim(0,1.0)+
+  facet_wrap(~SH114448_types)+
+  scale_fill_brewer(palette = "Dark2")+
+  theme_classic()+
+  labs(fill = "sex")
+o_a_s
+
+Omy5.List %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age < 5) %>% 
+  filter(SH114448_types != "NA_NA") %>% 
+  count(SH114448_types, sex)
+Omy5.List %>% 
+  filter(!is.na(new_sex)) %>% 
+  filter(age < 5) %>% 
+  filter(SH114448_types != "NA_NA") %>% 
+  count(SH114448_types, sex, age)
+
+Karyotype.Matrix %>% 
+  filter(pa_age == 2) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop..), position = "dodge")+
+  ylim(0,1.0)+
+  facet_wrap(~kid_SH114448_types)+
+  ggtitle("Offspring of Two year old Fathers Only")
+
+Karyotype.Matrix %>% 
+  filter(pa_age == 3) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop..), position = "dodge")+
+  ylim(0,1.0)+
+  facet_wrap(~kid_SH114448_types)+
+  ggtitle("Offspring of Three year old Fathers Only")
+
+Karyotype.Matrix %>%
+  filter(pa_age == 4) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop..), position = "dodge")+
+  ylim(0,1.0)+
+  facet_wrap(~kid_SH114448_types)+
+  ggtitle("Offspring of Four year old Fathers Only")
+
+Karyotype.Matrix %>% 
+  filter(ma_age == 2) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop..), position = "dodge")+
+  ylim(0,1.0)+
+  facet_wrap(~kid_SH114448_types)+
+  ggtitle("Offspring of Two year old mothers Only")
+
+Karyotype.Matrix %>% 
+  filter(ma_age == 3) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop..), position = "dodge")+
+  ylim(0,1.0)+
+  facet_wrap(~kid_SH114448_types)+
+  ggtitle("Offspring of Three year old mothers Only")
+
+Karyotype.Matrix %>%
+  filter(ma_age == 4) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop..), position = "dodge")+
+  ylim(0,1.0)+
+  facet_wrap(~kid_SH114448_types)+
+  ggtitle("Offspring of Four year old mothers Only")
+
+Karyotype.Matrix %>%
+  mutate(mid_age = (pa_age + ma_age)/2) %>% 
+  mutate(pair = paste(pa_age, ma_age, sep = "_")) %>% 
+  filter(mid_age == kid_age) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  filter(pair != "2_4") %>% 
+  filter(pair != "4_2") %>% 
+  ggplot()+
+  geom_bar(aes(x= kid_age, y = ..prop..), position = "dodge")+
+  facet_wrap(.~kid_SH114448_types)+
+  ggtitle("mid_age == kid_age")
+
+```
+
+```{r}
+Karyotype.Matrix %>% 
+  filter(kid_SH114448_types == "R_R", pa_SH114448_types == "R_R") %>% 
+  ggplot()+
+  geom_bar(aes(x = kid_age, y = ..count.., fill = as.character(pa_age)), position = "dodge")
+
+Karyotype.Matrix %>% 
+  filter(kid_SH114448_types == "R_R", pa_SH114448_types == "R_R", ma_SH114448_types == "R_R")
+
+```

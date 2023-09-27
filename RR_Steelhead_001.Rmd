@@ -1,0 +1,212 @@
+---
+title: "RR Steelhead 2007-2020, Notebook 1"
+subtitle: "Cleaning up the genotype data"
+output: html_notebook
+---
+
+Uploading the data.
+```{r}
+library(tidyverse)
+library(lubridate)
+RRSteelhead <- read_csv( "RR_steelhead_2007-2020_complied_genotype_data.csv") 
+RRSteelhead 
+```
+
+The next goal is the remove unwanted columns
+```{r}
+RRSteelhead
+#remove the following columns Genotype_Number, SexID, X37, 
+#added a column with the spawn year, the year was taken from the collection date
+RRSteelhead$COLLECTION_DATE <- mdy(RRSteelhead$COLLECTION_DATE)
+RRSteelhead
+RRprep <- RRSteelhead %>% 
+  select(-GENOTYPE_NUMBER, -starts_with("SexID"))
+RRprep1 <- RRprep %>% 
+  mutate(.,SpawnYear = case_when(
+    month(RRprep$COLLECTION_DATE) == 1 ~ year(RRprep$COLLECTION_DATE),
+    month(RRprep$COLLECTION_DATE) == 2 ~ year(RRprep$COLLECTION_DATE),
+    month(RRprep$COLLECTION_DATE) == 3 ~ year(RRprep$COLLECTION_DATE),
+    month(RRprep$COLLECTION_DATE) == 4 ~ year(RRprep$COLLECTION_DATE),
+    month(RRprep$COLLECTION_DATE) == 5 ~ year(RRprep$COLLECTION_DATE),
+    month(RRprep$COLLECTION_DATE) == 12 ~ (year(RRprep$COLLECTION_DATE)+1),
+    is.na(RRprep$COLLECTION_DATE) ~ 2013))
+#write_csv(RRprep1, "RR_spawn_year_code_check.csv")
+
+RRprep1 %>% select(COLLECTION_DATE, SpawnYear) %>% filter(month(.$COLLECTION_DATE) == 12)
+# successful assigned the december spawners into the appropriate spawn year
+#only 3 december spawning fish
+
+RRprep1 %>% filter(is.na(SpawnYear)) 
+```
+
+Removing loci from analysis
+```{r}
+#removing the following loci: SH121006-131, Omy-R04944
+RRprep1 %>%  
+  select(NMFS_DNA_ID, COLLECTION_DATE, SpawnYear,starts_with("SH121006-131"), starts_with("Omy_R04944"))%>%
+  filter(is.na(Omy_R04944))
+#SH121006-131 was genotyped in 2007 through 2014
+
+RRprep1 %>%  
+  select(NMFS_DNA_ID, COLLECTION_DATE, SpawnYear,starts_with("SH121006-131"), starts_with("Omy_R04944"))%>%
+  filter(!is.na(Omy_R04944))
+#Omy-R04944 was genotyped 2015 through 2020
+
+
+RRprep2 <- RRprep1 %>% 
+  select(-starts_with("SH121006-131"), -starts_with("Omy_R04944")) %>% 
+  mutate(Wild = ifelse((STRAIN == "Wild" | grepl("Wild|WILD|wild", SAMPLE_COMMENTS)), yes = "wild", no = NA)) %>% 
+  select(NMFS_DNA_ID, BOX_ID, Wild, everything())  
+RRprep2$Wild <- replace_na(RRprep2$Wild, "hatchery")
+##added a "Wild" column to indicate the fish was thought to be wild (vs hatchery orgin) when spawned
+RRprep2 %>%  count(Wild)
+```
+Next thing to fix is to ensure the metadata is uniform for sex and hatchery and watershed, (ie make "Warm Springs" and "Warm Springs Hatchery" into "Warm_Springs" for all of them)
+
+```{r}
+RRprep2 %>% filter(SEX != "Male", SEX != "Female" )
+RRprep2 %>% select(SEX) %>% unique()
+#there is one problematic sample, M056931, where female is misspelled
+RRprep2$SEX <- recode(RRprep2$SEX, "Fmeale" = "Female")  
+
+RRprep2 %>% filter(SEX != "Male", SEX != "Female" )
+#misspelling seems to be fixed
+  
+RRprep2 %>% select(HATCHERY) %>% unique()
+RRprep2$HATCHERY <- recode(RRprep2$HATCHERY, "Warm Springs Hatchery" = "Warm_Springs", "Warm Springs" = "Warm_Springs", "Coyote Valley Fish Facility" = "Coyote_Valley", "Coyote Valley Hatchery" = "Coyote_Valley")
+RRprep2$WATERSHED <- recode(RRprep2$WATERSHED, "Russian River" = "Russian_River")
+
+RRprep2 %>% select(HATCHERY) %>% unique()
+RRprep2 %>% select(SEX) %>%  unique()
+RRprep2 %>% select(WATERSHED) %>% unique()
+RRprep2 %>% count(WATERSHED)
+
+write_csv(RRprep2, "RR_steelhead_2007-20_compiled_and_clean.csv")
+```
+
+
+The next steps: 1) finding and removing duplicates for a single NMFS_DNA_ID by picking the one with the most data and 2) finding and removing samples with too much missing data (ie "High-missers"), we want to keep the sample with less than 10% failed/missing loci
+```{r}
+RRprep2 %>% count(SpawnYear)
+
+# first identify which rendition of an individual to keep
+rendition_genos <- RRprep2 %>%
+  count(NMFS_DNA_ID) %>%
+  filter(n != 1) %>%
+  semi_join(RRprep2, ., by = "NMFS_DNA_ID") %>%
+  group_by(NMFS_DNA_ID) %>%
+  mutate(rendition = 1:n()) %>%
+  select(rendition, everything()) %>%
+  select(-(BOX_ID:Sample_ID), -SpawnYear)
+
+rendition_genos_meta <- RRprep2 %>%
+  count(NMFS_DNA_ID) %>%
+  filter(n != 1) %>%
+  semi_join(RRprep2, ., by = "NMFS_DNA_ID") %>%
+  group_by(NMFS_DNA_ID) %>%
+  mutate(rendition = 1:n()) %>%
+  select(rendition, everything())
+
+#1554 NMFS_IDs with more than 1 rendition (total of 3140)
+
+keepers <- rendition_genos %>%
+  gather(key = "locus", value = "allele_int", -rendition, -NMFS_DNA_ID) %>%
+  group_by(NMFS_DNA_ID, rendition) %>%
+  summarise(num_non_miss = sum(allele_int != 0) / 2) %>%
+  arrange(NMFS_DNA_ID, desc(num_non_miss)) %>%
+  slice(1)
+#keepers has the renditions of the repeated NMFS_IDs with the most data
+
+keepers
+
+# make a wide genos data frame of those individuals
+final_dupie_genos <- rendition_genos %>%
+  semi_join(keepers, by = c("NMFS_DNA_ID", "rendition")) %>%
+  ungroup() %>%
+  select(-rendition)
+
+final_dupie_meta <- rendition_genos_meta %>%
+  semi_join(keepers, by = c("NMFS_DNA_ID", "rendition")) %>%
+  ungroup() %>%
+  select(-rendition)
+#this gives the list of NMFS_IDs to keep in the two-column format
+
+
+# now, we want to make a similar wide file of all the rest,
+# dropping the ones that were duplicated.
+non_duped_genos <- RRprep2 %>%
+  anti_join(rendition_genos, by = "NMFS_DNA_ID") %>%
+  select(-(BOX_ID:Sample_ID), -SpawnYear)
+
+non_duped_meta <- RRprep2 %>%
+  anti_join(rendition_genos_meta, by = "NMFS_DNA_ID")
+#this makes a list of all the genotypes that were not duplicated
+
+wide_genos <- bind_rows(non_duped_genos, final_dupie_genos)
+wide_meta <- bind_rows(non_duped_meta, final_dupie_meta)
+#this binds the non-duplicates with the keepers
+#total of 18132 samples after the duplicates are removed
+
+aes(x = ma_sample_id, y = pa_sample_id)
+write_rds(wide_meta, "RR_spawner_meta.rds")
+wide_meta %>% count(SpawnYear)
+```
+The next step is to take the "wide_genos" data and remove any "high-missers", which are samples with missing data from more than 10% of the loci. 
+```{r}
+wide_genos
+
+hi_miss_genos <- wide_genos %>%
+  gather(key = "locus", value = "allele_int", -NMFS_DNA_ID) %>%
+  group_by(NMFS_DNA_ID) %>% 
+  summarise(num_non_miss = sum(allele_int != 0) / 2) %>%
+  arrange(num_non_miss) %>%
+  filter(num_non_miss < 85)
+  
+#the highest amount is 94 loci, want to keep the samples with 10% or less missing data, so I want to keep samples with data for 85 loci and higher
+
+#hi_miss_genos is the list of samples to remove from the data, 38 samples to be removed
+
+#final data set should have 18094 samples after removal of hi miss genos
+
+wide_genos_good <- wide_genos %>% 
+  anti_join(hi_miss_genos, by = "NMFS_DNA_ID")
+
+wide_meta_good <- wide_meta %>% 
+  anti_join(hi_miss_genos, by = "NMFS_DNA_ID")
+
+write_csv(wide_meta_good, "RR_07-20_metadata.csv")
+write_csv(wide_genos_good, "RR_07-20_genotypes.csv")
+  
+wide_genos_good
+wide_meta_good
+#18094 samples
+
+```
+
+I have now removed the duplicates and removed the samples with more than 10% missing data! I can now get the data ready for HatcheryPedAgree....
+
+Rearranging data for HatcheryPedAgree R package
+```{r}
+meta <- wide_meta_good %>% 
+  select(NMFS_DNA_ID:Sample_ID, SpawnYear) %>% 
+  rename(indiv = NMFS_DNA_ID, sex = SEX, spawner_group = COLLECTION_DATE, year = SpawnYear) %>% 
+  select(indiv, sex, spawner_group, year, HATCHERY, LENGTH, WATERSHED, Wild) %>% 
+  rename(hatchery = HATCHERY, length = LENGTH, watershed = WATERSHED)
+
+write_rds(meta, "RR_steelhead_2007-2020_meta.rds", compress = "xz")
+meta %>% filter(is.na(indiv))
+geno <- wide_genos_good %>% 
+  gather(key = "locus", value = "allele_int", -NMFS_DNA_ID) %>% 
+  mutate(locus = str_replace(locus, "_1$", "")) %>% 
+  group_by(NMFS_DNA_ID, locus) %>% 
+  mutate(gene_copy = 1:2) %>% 
+  ungroup() %>% 
+  mutate(allele_int = as.integer(allele_int)) %>% 
+  rename(indiv = NMFS_DNA_ID)
+
+write_rds(geno, "RR_steelhead_2007-2020_geno.rds", compress = "xz")
+
+meta %>% count(year)
+```
+
+

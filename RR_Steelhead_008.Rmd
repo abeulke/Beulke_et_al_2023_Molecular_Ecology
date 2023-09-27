@@ -1,0 +1,379 @@
+---
+title: "RR Steelhead 2007-2020, Population Genetics, Notebook 8"
+output: html_notebook
+---
+
+Heterozygosity
+
+1. Proportion of heterozygous loci per individual
+
+Note the following inbreedR formatting requirements for the genotypes infile:
+• Two-column genotype format (two columns per locus)
+• Input data file must contain genotypes only, beginning at column 1; omit individual IDs
+• Missing data must be coded as NA
+• Locus name header row is acceptable
+Install the inbreedR package and load the library.
+ install.packages("inbreedR") library(inbreedR)
+ 
+```{r}
+#install.packages("inbreedR") 
+library(inbreedR)
+library(tidyverse)
+```
+ 
+Data in two column format:
+```{r}
+#install.packages("naniar")
+library("naniar")
+#want a data file with ids and snp data
+#replace zeros with na
+wide_genos_rm7 <- read_csv("RR_2007-2020_wide_genos_rm7_before_msa.csv") %>% rename(indiv = NMFS_DNA_ID)
+fish_list <- read_csv("RR_steelhead_07-20_known_sexes.csv") %>% select(indiv)
+
+RR_hz_data <- left_join(fish_list, wide_genos_rm7, by = "indiv") %>% 
+  replace_with_na_all(condition = ~.x == 0)
+
+RR_hz_data 
+RR_hz_no_id <- RR_hz_data %>% select(-indiv)
+RR_hz_no_id
+```
+
+```{r}
+genotypes <- convert_raw(RR_hz_no_id) 
+check_data(genotypes, num_ind=17526, num_loci=87) #TRUE
+```
+
+Calculate iHz using the multilocus heterozygosity statistic (MLH) which ranges from 0 to 1, using the MLH() function. Note that inbreedR also offers calculation of sMLH (standardized MLH) which is different from MLH, and yields values >1.
+ 
+```{r}
+mLh <- MLH(genotypes) 
+mLh
+```
+  
+```{r}
+write.table(mLh, "RR-mLh-87loci.txt", sep="\t", row.names = TRUE, quote = FALSE)
+```
+Now we have a table of individual heterozygosity results to use in downstream analyses. The individual IDs will need to be re-attached to the iHz results before moving forward 
+
+```{r}
+mlh.tib <- as_tibble(mLh) %>% 
+  rename(ihz = value) %>% 
+  mutate(num = 1:17526)
+
+RR_hz_data_n <- RR_hz_data %>% 
+  mutate(num = 1:17526)
+
+RR_ihz <- full_join(RR_hz_data_n, mlh.tib, by = "num")
+RR_ihz
+```
+
+2. Observed and expected heterozygosity by population or group
+
+Whereas iHz/MLH above is an individual-level measure of genetic diversity, observed and expected heterozygosity are calculated at the level of the population or group of interest. I have used two different R packages to calculate heterozygosity–adegenet and strataG
+Start with strataG
+
+```{r}
+install.packages("strataG") #answer 'Yes' to compile from sources 
+library(strataG)
+vignette("gtypes", "strataG")
+```
+
+Infile format requirements for strataG:
+• Two-column format (two columns per locus)
+• Missing data should be coded as NA
+• Indiv ID column and header row are acceptable
+• Locus names should have same root & not be duplicated, e.g., Oki94903-192.1 and
+Oki94903-192.2
+
+so that means I can use RR_hz_data...oh, but want hathcery info too
+
+Create a gtypes object in strataG using the df2gtypes() function. Specify the ploidy level, and give the column numbers for individual ID (id.col), first column of alleles (loc.col), and population or group (strata). Strata is/are optional, but if one doesn’t specify strata, strataG will come up with its own interpretation of the strata within the dataset, which is definitely not preferred! To run df2gtypes without any strata, use strata = NULL, and the function will treat the whole dataset as one group or stratum, giving it the name “Default”.
+```{r}
+wide_genos_rm7 
+fish_list_hatch <- read_csv("RR_steelhead_07-20_known_sexes.csv") %>% select(indiv, hatchery)
+
+RR_hz_data_hatch <- left_join(fish_list_hatch, wide_genos_rm7, by = "indiv") %>% 
+  replace_with_na_all(condition = ~.x == 0)
+RR_hz_data_hatch
+
+gt.rr <- df2gtypes(RR_hz_data_hatch, ploidy = 2, strata = 2, id.col = 1, loc.col = 3)
+glimpse(gt.rr)
+gt.rr #this is a Large List or gtypes object, 1MB
+write_rds(gt.rr, "RR_steelhead_gt_rr.rds")
+
+getNumInd(gt.rr) #17526
+getNumLoci(gt.rr) #87
+```
+
+```{r}
+summarizeLoci(gt.rr) %>% 
+  write_csv("RR-summ-loci-StrataG.csv")
+
+```
+
+heterozygosity statistics averaged over loci and group(s):
+
+```{r}
+heterozygosity(gt.rr, by.strata = FALSE, type = "observed") #Ho by locus
+heterozygosity(gt.rr, by.strata = TRUE, type = "observed") #Ho by stratum and locus
+heterozygosity(gt.rr, by.strata = FALSE, type = "observed") %>%
+  summarise(mean(obsvd.het)) #mean Ho over all loci
+# mean(obsvd.het) 0.3594397		
+
+heterozygosity(gt.rr, by.strata = FALSE, type = "expected") %>%
+  summarise(mean(exptd.het)) #mean He over all loci 
+# mean(exptd.het) 0.3649106	
+
+```
+
+summarizeInds() calculates the proportion of loci per individual that are homozygous (i.e.,
+= 1 - iHz)
+```{r}
+summarizeInds(gt.rr)
+```
+Now I'm going to do the above steps for each year of data to see if changes occur over time
+
+```{r}
+wide_genos_rm7 
+fish_list_hatch_yr <- read_csv("RR_steelhead_07-20_known_sexes.csv") %>% select(indiv, hatchery, year)
+
+RR_hz_data_hatch_yr <-left_join(fish_list_hatch_yr, wide_genos_rm7, by = "indiv") %>% 
+  replace_with_na_all(condition = ~.x == 0)
+RR_hz_data_hatch_yr
+```
+
+```{r}
+#try to make a function...
+het <- function(x){
+  d <- RR_hz_data_hatch_yr %>% 
+    filter(year == x) %>% 
+    df2gtypes(., ploidy = 2, strata = 2, id.col = 1, loc.col = 4)
+  
+  ho <- heterozygosity(d, by.strata = FALSE, type = "observed")
+  ho_mean <- heterozygosity(d, by.strata = FALSE, type = "observed") %>%
+  summarise(mean(obsvd.het)) %>% 
+  mutate(year = x) 
+  he <- heterozygosity(d, by.strata = FALSE, type = "expected")
+  he_mean <- heterozygosity(d, by.strata = FALSE, type = "expected") %>%
+  summarise(mean(exptd.het)) %>% 
+  mutate(year = x)
+  
+  data <- c(ho_mean, he_mean)
+  return(data)
+}
+
+het(2007)
+
+
+het_hatch <- function(x){
+  d <- RR_hz_data_hatch_yr %>% 
+    filter(year == x) %>% 
+    df2gtypes(., ploidy = 2, strata = 2, id.col = 1, loc.col = 4)
+  ho_hatch <- heterozygosity(d, by.strata = TRUE, type = "observed")
+  ho_hatch_mean <- heterozygosity(d, by.strata = TRUE, type = "observed") %>%
+    group_by(stratum) %>% 
+    summarise(mean(obsvd.het)) %>% 
+    mutate(year = x)
+  he_hatch <- heterozygosity(d, by.strata = TRUE, type = "expected")
+  he_hatch_mean <- heterozygosity(d, by.strata = TRUE, type = "expected") %>%
+    group_by(stratum) %>%
+    summarise(mean(exptd.het)) %>% 
+    mutate(year = x)
+  data <- c(ho_hatch_mean, he_hatch_mean)
+  return(data)
+}
+
+het_hatch(2010)
+
+years_list <- as.list(seq(2007,2020, 1))
+library(purrr)
+het_info <- years_list %>% 
+  purrr::map_dfr(~het(.x)) 
+het_hatch_info <- years_list %>% 
+  map_dfr(~het_hatch(.x))
+
+het_info2 <- het_info %>% 
+  rename(het_obs_mean = "mean(obsvd.het)", het_exp_mean ="mean(exptd.het)") %>% 
+  mutate(obs_over_exp_mean = het_obs_mean/het_exp_mean)
+het_hatch_info2 <- het_hatch_info %>% 
+  rename(het_obs_mean_strata = "mean(obsvd.het)", het_exp_mean_strata ="mean(exptd.het)") %>% 
+  mutate(obs_over_exp_mean_strata = het_obs_mean_strata/het_exp_mean_strata)
+het_info2
+het_hatch_info2
+#i think this is good!
+```
+
+
+```{r}
+library(RColorBrewer)
+het_info2
+het_hatch_info2
+het_plot <- het_hatch_info2 %>% 
+  filter(stratum...1 != "Coyote_Valley,Warm_Springs") %>% 
+  ggplot(data = )+
+  geom_line(aes(x = year...3, y = obs_over_exp_mean_strata, color = stratum...1))+
+  geom_point(aes(x = year...3, y = obs_over_exp_mean_strata, color = stratum...1))+
+  scale_x_continuous(breaks = seq(2007, 2020, 1))+
+  labs(x = "Year", color = "Program", y = "Mean Observed over Expected Heterozygosity")+
+  theme_classic()+
+  ggtitle("Heterozygosity")+
+  scale_color_brewer(palette = "Dark2")
+
+ggsave("RR_het_plot.png", plot = het_plot, width = 7, height = 4)
+het_plot
+
+ggplot(data = het_info2)+
+  geom_line(aes(x = year...2, y = obs_over_exp_mean))+
+  geom_point(aes(x = year...2, y = obs_over_exp_mean))+
+  scale_x_continuous(breaks = seq(2007, 2020, 1))+
+  theme_classic()+
+  ggtitle("Heterozygosity")
+```
+
+
+3. Pairwise relatedness (rxy) and 
+4. Mean individual releatedness
+
+Going to use the package related
+```{r}
+#install.packages("related") #not available for R 3.6.2; got it from R Forge
+#To get this working, I had to download clang7 and gfortran 6.1 to get the package from R-Forge working
+#makings sure that a link to gfortran is in your $PATH
+#install.packages("related", repos="http://R-Forge.R-project.org")
+
+library(related)
+library(tidyverse)
+```
+The infile format for related-package is as follows:
+• Two-column format (two columns per locus)
+• No column headers (genotypes begin on row 1)
+• Individual IDs in first column, alleles start in second column
+• Missing data is coded as 0 (zero) and will be dealt with behind the scenes
+
+```{r}
+
+wide_genos_rm7 
+fish_list
+
+RR_hz_data_zeros <-left_join(fish_list, wide_genos_rm7, by = "indiv") 
+#id and snps with zeros for missing data
+colnames(RR_hz_data_zeros) <- NULL
+
+RR_hz_data_zeros
+  
+input <- readgenotypedata(RR_hz_data_zeros)
+str(input, 6)
+```
+
+Now calculate pairwise relatedness using the coancestry() function. This will take a minute or two, depending on the size of the dataset. Note that related will calculate a number of different relatedness estimators, which might be of interest depending on the project. Here we will use the Queller & Goodnight rxy that is most similar to the ‘Q&G 1989’ estimator produced by the Kinship program.
+```{r}
+#coa <- coancestry(input$gdata, quellergt=2) 
+#head(coa, 6)
+```
+Didn't work to do everything together, need to split it up by year and hatchery 
+```{r}
+#lets make another function or two....
+wide_genos_rm7 
+fish_list_hatch_yr
+RR_hz_data_hatch_yr_zeros <-left_join(fish_list_hatch_yr, wide_genos_rm7, by = "indiv") 
+RR_hz_data_hatch_yr_zeros
+
+#steps
+  
+pairwise_rel <- function(x,y){
+  d <- RR_hz_data_hatch_yr_zeros %>% 
+    filter(year == x) %>% 
+    filter(hatchery == y) %>% 
+    select(-year, -hatchery)
+  
+  colnames(d) <- NULL #need to remove column names
+  
+  dd <- readgenotypedata(d) #input files for each year and hatchery... (give allele frequencies for each SNP)
+  
+  ddd <- coancestry(dd$gdata, quellergt=2) 
+  #write_csv(ddd$relatedness, path = "RR_WS_07-relatedness.csv", na = "NA", append = FALSE, col_names = TRUE, quote_escape = "double")
+  
+
+  e <- ddd$relatedness %>% select(ind1.id, ind2.id, quellergt)
+  
+  e_rev <- e %>% 
+    mutate(tmp = ind1.id, ind1.id = ind2.id, ind2.id = tmp) %>%
+    select(-tmp) 
+  
+  both_xy <- bind_rows( e, e_rev)
+  #bind together the relatedness values of ind1 + ind2 and the reverse order of ind2+ ind1
+  
+  mean_rxy <- both_xy %>% 
+    group_by(ind1.id) %>% 
+    summarise(mean_qgt = mean(quellergt), num_rxys_in_mean = n() )
+  #mean rxy per individual --- so the mean relatedness for ind1 when paired with all other individals
+  
+  
+  f <- mean(mean_rxy$mean_qgt) %>% as.tibble() %>% 
+    mutate(year = x) %>% 
+    rename(mean_of_mean_rxy = value) %>% 
+    mutate(hatchery = y)
+  #mean relatedness of all individuals at a hatchery on a given year
+
+  return(f)
+}
+```
+
+```{r}
+pairwise_rel(2010, "Warm_Springs")
+  
+
+years_list <- as.list(seq(2007,2020, 1))
+cv_years <- as.list(seq(2009,2020, 1))
+hatch_list <- as.list(c("Warm_Springs", "Coytoe_Valley", "Coyote_Valley,Warm_Springs"))
+library(purrr)
+#pairwise_mean <- map2_dfr(.x = years_list, .y = hatch_list, ~pairwise_rel(.x, .y)) 
+#mapped vectors need to be the same lengths
+
+pairwise_mean_WS <- map_dfr(years_list, ~pairwise_rel(.x, "Warm_Springs"))
+
+pairwise_mean_CV <- map_dfr(cv_years, ~pairwise_rel(.x, "Coyote_Valley"))
+#pairwise_mean_CVWS <- map_dfr(years_list, ~pairwise_rel(.x, "Coyote_Valley,Warm_Springs"))
+
+all <- bind_rows(pairwise_mean_WS, pairwise_mean_CV)
+
+library(RColorBrewer)
+
+ggplot(data = all)+
+  geom_point(aes(x = year, y =mean_of_mean_rxy, color = hatchery))+
+  geom_line(aes(x = year, y = mean_of_mean_rxy, color = hatchery))+
+  scale_color_brewer(palette = "Dark2")+
+  scale_x_continuous(breaks=seq(2007,2020, 1))+
+  ylim(-0.0035, 0)+
+  labs(y = "Mean relatedness among individuals")+
+  theme_classic()
+
+day_rel <- read_rds("/Users/annebeulke/Documents/Russian-River-R/tidyInbredPermute/annual_relatedness_by_spawn_day.rds")
+day_rel %>% arrange(mean_qgt)
+
+
+ggplot()+
+  geom_point(data = all, aes(x = year, y =mean_of_mean_rxy, color = hatchery), linetype = "dashed")+
+  geom_line(data = all, aes(x = year, y = mean_of_mean_rxy, color = hatchery), linetype = "dashed")+
+  geom_point(data = day_rel, aes(x = y, y =mean_qgt, color = hatchery))+
+  geom_line(data = day_rel, aes(x = y, y = mean_qgt, color = hatchery))+
+  scale_color_brewer(palette = "Dark2")+
+  scale_x_continuous(breaks=seq(2007,2020, 1))+
+  #ylim(-0.0035, 0)+
+  labs(y = "Mean relatedness among individuals")+
+  theme_classic()
+```
+
+# going to get Fst for CV and WS
+```{r}
+library(strataG)
+browseVignettes("strataG")
+gt.rr
+overallTest(gt.rr, stats = c("fst", "chi2"), nrep = 1000)
+
+```
+
+```{r}
+pwise <- pairwiseTest(gt.rr, stats = c("fst.prime", "gst"), nrep = 1000)
+```
+

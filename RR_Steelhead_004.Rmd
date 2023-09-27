@@ -1,0 +1,403 @@
+---
+title: "Russian River Steelhead 2007-2020, Notebook 4"
+subtitle: "Iterperous fish analyses"
+output: html_notebook
+---
+Import the data:
+
+```{r}
+library(tidyverse)
+itero_fish <- read_csv("RR_itero_and_parent_assignments.csv")
+RR_fish <- read_csv("RR_unique_individuals_2007_2020.csv", col_names = T, cols(
+  indiv = col_character(),
+  year = col_character(),
+  spawner_group = col_character(),
+  hatchery = col_character(),
+  length = col_double(),
+  watershed = col_character(),
+  Wild = col_character(),
+  sex = col_character()
+  ))
+RR_Ped <- read_csv("RR_Pedigree_2007_2020.csv")
+itero_fish; RR_fish; RR_Ped
+
+RR_fish %>% filter(is.na(sex))
+```
+
+```{r}
+#iteroparous fish, adding date as day of year and making figure
+library(tidyverse)
+library(RColorBrewer)
+display.brewer.pal(8, "Dark2")
+brewer.pal(8, "Dark2")
+
+library(lubridate)
+itero_fish$date1 <- mdy(itero_fish$date1) 
+itero_fish$date2 <- mdy(itero_fish$date2) 
+itero_fish$date3 <- mdy(itero_fish$date3) 
+itero_fish2 <- itero_fish %>%
+  mutate(date1_dayofyear = (strftime(date1, format = "%j"))) %>% 
+  mutate(date2_dayofyear = (strftime(date2, format = "%j"))) %>% 
+  mutate(date3_dayofyear = (strftime(date3, format = "%j")))
+
+itero_fish2$date1_dayofyear <- as.numeric(itero_fish2$date1_dayofyear)
+itero_fish2$date2_dayofyear <- as.numeric(itero_fish2$date2_dayofyear)
+itero_fish2$date3_dayofyear <- as.numeric(itero_fish2$date3_dayofyear)
+
+it <- ggplot(data = itero_fish2)+
+  geom_point(aes(x = date1_dayofyear, y = date2_dayofyear))+
+  xlab("First spawn date (Day of Year)")+
+  ylab("Second spawn date (Day of Year)")+
+  geom_smooth(method = "lm", aes(x = date1_dayofyear, y = date2_dayofyear), color="#503143")+
+  theme_classic()+
+  scale_y_continuous(breaks = seq(0, 120, 15))+
+  scale_x_continuous(breaks = seq(0, 120, 15))+
+  coord_fixed(ratio = 1, xlim = c(0,120), ylim = c(0,120), expand = F)
+  
+it
+
+#lm(y ~ x)
+summary(lm(date2_dayofyear ~ date1_dayofyear, itero_fish2))
+
+
+mean(itero_fish2$date1_dayofyear)
+sd(itero_fish2$date1_dayofyear)
+mean(itero_fish2$date2_dayofyear)
+sd(itero_fish2$date2_dayofyear)
+#what about when it is seperated by ages?
+itero_fish2 %>% 
+  group_by(kid_age) %>% 
+  summarise(mean(date1_dayofyear), sd(date1_dayofyear))
+
+#the ages for the second dates would be one year older, so the 2 yr olds are now 3 yr olds and 3 yr olds are now 4 yr olds
+itero_fish2 %>% 
+  group_by(kid_age) %>% 
+  summarise(mean(date2_dayofyear), sd(date2_dayofyear))
+
+kruskal.test(itero_fish2$date1_dayofyear, itero_fish2$date2_dayofyear)
+#p value = 0.2168, there for the groups are not significantly different
+#"if the p-value is less than the significance level 0.05, we can conclude that there are significant differences between the treatment groups."-- http://www.sthda.com/english/wiki/kruskal-wallis-test-in-r
+
+kruskal.test(itero_fish2$date1_dayofyear, itero_fish2$kid_age)
+#pvalue = 0.05833
+kruskal.test(itero_fish2$date2_dayofyear, itero_fish2$kid_age)
+#0.07184
+
+first <- itero_fish2 %>%  
+  select(kid, date1_dayofyear, kid_age) %>% 
+  rename(dayofyear = date1_dayofyear, age = kid_age)
+second <- itero_fish2 %>% 
+  select(kid, date2_dayofyear, kid_age) %>% 
+  rename(dayofyear = date2_dayofyear) %>%  
+  mutate(age = (kid_age + 1)) %>% 
+  select(-kid_age)
+pool_ages <- bind_rows(first, second) %>% 
+  arrange(kid)
+
+kruskal.test(pool_ages$dayofyear, pool_ages$age)
+#0.0168
+
+pool_ages %>% group_by(age) %>% summarise(mean(dayofyear), sd(dayofyear))
+```
+
+
+```{r}
+ggplot(data = itero_fish2)+
+  geom_histogram(aes(x = length1, y = ..count.. , fill = as.character(kid_age)), position = "dodge", binwidth = 10)
+
+ggplot(data = itero_fish2)+
+  geom_histogram(aes(x = length2, y = ..count.. , color = as.character(kid_age)), position = "dodge", binwidth = 10)
+
+ggplot(data = itero_fish2)+
+  geom_histogram(aes(x = length1, y = ..count.. , fill = as.character(kid_age)), position = "dodge", binwidth = 10)+
+  scale_x_continuous(breaks = seq(400, 850, 25))+
+  geom_histogram(aes(x = length2, y = ..count.. , color = as.character(kid_age)), position = "dodge", binwidth = 10)
+
+
+ggplot(data = itero_fish2)+
+  geom_point(aes(x = length1, y = length2 ))
+```
+```{r}
+fish_marked_as_both_sexes <- read_csv("RR_cross_sex_matches_rm7.csv") %>% 
+  select(retained_id) %>% 
+  unique() %>% 
+  rename(indiv = retained_id)
+fish_marked_as_both_sexes #26 fish
+
+ma_sex_unclear <- RR_Ped %>% 
+  filter(ma_sex == pa_sex) %>% 
+  select(ma) %>% 
+  arrange(ma) %>%  
+  unique() %>% 
+  rename(indiv = ma)
+pa_sex_unclear <- RR_Ped %>% 
+  filter(ma_sex == pa_sex) %>% 
+  select(pa) %>% 
+  arrange(pa) %>%  
+  unique() %>% 
+  rename(indiv = pa)
+ma_sex_unclear #71
+pa_sex_unclear #72
+
+ids_sex_unclear <- bind_rows(ma_sex_unclear, pa_sex_unclear, fish_marked_as_both_sexes) %>%  distinct()
+ids_sex_unclear
+
+```
+Now that i have a list of ids where the sex is unclear, I will go to the RR_Ped and remove the sex info for these fish
+```{r}
+Known_Sexes_Ped <- RR_Ped %>% 
+  mutate(new_kid_sex = ifelse(kid %in% ids_sex_unclear$indiv, yes =  NA, no = RR_Ped$kid_sex)) %>% 
+  mutate(new_pa_sex = ifelse(pa %in% ids_sex_unclear$indiv, yes =  NA, no = RR_Ped$pa_sex)) %>%
+  mutate(new_ma_sex = ifelse(ma %in% ids_sex_unclear$indiv, yes =  NA, no = RR_Ped$ma_sex)) %>%
+  select(kid, pa, ma, kid_sex, new_kid_sex, pa_sex, new_pa_sex, ma_sex, new_ma_sex, everything())
+```
+I will remove teh unclear sex info for the list of fish
+```{r}
+Known_Sexes_fish_list <- RR_fish %>% 
+  mutate(new_sex = ifelse(indiv %in% ids_sex_unclear$indiv, yes =  NA, no = RR_fish$sex)) 
+```
+And itero fish..
+```{r}
+Known_Sexes_itero <- itero_fish2 %>% 
+  mutate(new_sex= ifelse(kid %in% ids_sex_unclear$indiv, yes =  NA, no = itero_fish$sex)) %>% 
+  mutate(new_kid_sex = ifelse(kid %in% ids_sex_unclear$indiv, yes =  NA, no = itero_fish$kid_sex)) %>% 
+  mutate(new_pa_sex = ifelse(pa %in% ids_sex_unclear$indiv, yes =  NA, no = itero_fish$pa_sex)) %>%
+  mutate(new_ma_sex = ifelse(ma %in% ids_sex_unclear$indiv, yes =  NA, no = itero_fish$ma_sex)) %>%
+  select(kid,sex,new_sex, everything())
+```
+
+
+Okay looking at basic stats related to Sexes:
+```{r}
+Known_Sexes_fish_list %>% count(new_sex)
+Known_Sexes_Ped %>% count(new_kid_sex)
+Known_Sexes_itero %>% count(new_sex)
+```
+what about the parents that don't have the same spawn dates (aka, fish weren't recorded when spawned)? I'll need to make a new column for spawn dates that don't match and have this as NA so that these can be removed from the analyses where spawn date is important
+--> first step is geeting the dates listed in a way that they the columns can be compared appropriately
+--> then I need to remove the date info for these trios...maybe make a new column for the parent_sg and either list the matching date between the parents or NA
+```{r}
+library(purrr)
+Known_Sex_Date_Ped <- Known_Sexes_Ped %>% 
+  mutate(pa_sg_list = str_split(pa_sg, ",")) %>%
+  mutate(ma_sg_list = str_split(ma_sg, ",")) %>% 
+  mutate(parent_sg = map2(ma_sg_list, pa_sg_list, safely(intersect))) %>% 
+  mutate(parent_sg = map(parent_sg, "result")) %>% 
+  mutate(parent_sg = as.character(parent_sg)) %>% 
+  select(parent_sg, pa_sg, ma_sg, everything()) %>% 
+  select(-pa_sg_list, -ma_sg_list) %>%  
+  mutate(new_parent_sg = ifelse(parent_sg == 'c("03/03/11", "02/26/11")', yes =  "02/26/11", no = ifelse(parent_sg == 'c("02/16/12", "02/10/12")', yes = "02/10/12", no = parent_sg))) %>% 
+  mutate(new_parent_sg = ifelse(new_parent_sg == "?", NA, new_parent_sg)) %>% 
+  mutate(new_parent_sg = ifelse(new_parent_sg == "NULL", NA, new_parent_sg)) %>% 
+  mutate(new_parent_sg = mdy(new_parent_sg)) %>% 
+  mutate(parent_dayofyear = (strftime(new_parent_sg, format = "%j"))) %>% 
+  mutate(kid_sg_list = str_split(kid_sg,",")) %>% 
+  mutate(new_kid_sg = map(kid_sg_list, min)) %>% 
+  mutate(new_kid_sg = as.character(new_kid_sg)) %>% 
+  mutate(new_kid_sg = mdy(new_kid_sg)) %>% 
+  mutate(kid_dayofyear = (strftime(new_kid_sg, format = "%j"))) %>% 
+  select(kid, ma, pa, kid_dayofyear, parent_dayofyear, everything()) %>% 
+  select(-kid_sg_list)
+
+
+Known_Sex_Date_Ped 
+
+#87 trios with parent pairs with different spawn dates
+#8 trios with parent pairs with unknown spawn dates "?"
+#4 trios with parent pairs that match on two dates --> chose the earliest date for the new_parent_sg
+```
+
+
+
+```{r}
+write_csv(Known_Sexes_fish_list, "RR_steelhead_07-20_known_sexes.csv")
+write_csv(Known_Sexes_Ped,"RR_pedigree_07-20_known_sexes.csv")
+write_csv(Known_Sexes_itero, "RR_itero_known_sexes.csv")
+write_csv(Known_Sex_Date_Ped, "RR_pedigree_07-20_known_sexes_and_dates.csv")
+```
+
+```{r}
+itero_fish2 %>% filter(is.na(kid_age)) %>% filter(year1 == 2011)
+```
+```{r}
+#itero seperated by sexes
+#Female
+Known_Sexes_itero %>% 
+  filter(new_sex == "Female") %>% 
+  ggplot()+
+  geom_point(aes(x = date1_dayofyear, y = date2_dayofyear))+
+  xlab("First Return Date (Day of Year)")+
+  ylab("Second Return Date (Day of Year)")+
+  geom_smooth(method = "lm", aes(x = date1_dayofyear, y = date2_dayofyear), color="#1B9E77")+
+  theme_classic()+
+  scale_y_continuous(breaks = seq(0, 120, 15))+
+  scale_x_continuous(breaks = seq(0, 120, 15))+
+  ggtitle("Females")
+#lm(y ~ x)
+Known_Sexes_itero %>% 
+  filter(new_sex == "Female") %>% 
+  lm(date2_dayofyear ~ date1_dayofyear, .) %>% 
+  summary()
+
+
+#Male
+Known_Sexes_itero %>% 
+  filter(new_sex == "Male") %>% 
+  ggplot()+
+  geom_point(aes(x = date1_dayofyear, y = date2_dayofyear))+
+  xlab("First Return Date (Day of Year)")+
+  ylab("Second Return Date (Day of Year)")+
+  geom_smooth(method = "lm", aes(x = date1_dayofyear, y = date2_dayofyear), color="#1B9E77")+
+  theme_classic()+
+  scale_y_continuous(breaks = seq(0, 120, 15))+
+  scale_x_continuous(breaks = seq(0, 120, 15))+
+  ggtitle("Males")
+#lm(y ~ x)
+Known_Sexes_itero %>% 
+  filter(new_sex == "Male") %>% 
+  lm(date2_dayofyear ~ date1_dayofyear, .) %>% 
+  summary()
+```
+ 
+```{r}
+Known_Sexes_itero %>% count(year1, new_sex, hatchery, kid_age)
+```
+ 
+```{r}
+Known_Sexes_fish_list %>% 
+  filter(hatchery == "Coyote_Valley,Warm_Springs")
+```
+
+```{r}
+w_h <- Known_Sexes_fish_list %>% filter(Wild != "wild") %>% filter(Wild != "hatchery")
+Known_Sexes_fish_list %>% filter(Wild == "wild,hatchery") #22
+Known_Sexes_fish_list %>% filter(Wild == "hatchery,wild") #55
+
+w_h
+write_csv(w_h, "RR_wild_hatch_indivs.csv")
+```
+ 
+Going to look at the number of wild and wild/hatchery iteroparous fish
+```{r}
+Known_Sexes_itero
+msa_info <- read_csv("RR_matchers_metadata_rm7.csv") %>% rename(kid = new_id)
+
+left_join(Known_Sexes_itero, msa_info, by = "kid") %>% filter(Wild.x == "wild")
+
+msa_info %>% filter(kid == "M046651")
+msa_info %>% filter(kid == "M100861")
+msa_info %>% filter(kid == "M101167")
+msa_info %>% filter(kid == "M108791")
+```
+
+```{r}
+Known_Sexes_itero
+
+#itero_fish2$length1 <- as.numeric(itero_fish$length1)
+#itero_fish2$length2 <- as.numeric(itero_fish$length2)
+it_growth <- itero_fish2 %>% mutate(growth = (length2 - length1)) 
+mean(it_growth$growth, na.rm = T)
+sd(it_growth$growth, na.rm = T)
+#growth in mm
+it_growth %>% arrange(growth)
+
+it_growth %>% group_by(kid_age) %>% 
+  summarize(mean(growth, na.rm = T), sd(growth, na.rm = T))
+
+it_growth %>% filter(!is.na(growth)) %>% group_by(kid_age) %>% count()
+it_growth %>% filter(!is.na(growth)) %>% group_by(kid_age) %>% arrange(kid_age, growth) %>% select(kid_age, growth, everything())
+
+G2yr <- it_growth %>% filter(kid_age == 2)
+G3yr <- it_growth %>% filter(kid_age == 3)
+t.test(G2yr$growth, G3yr$growth)
+
+write_csv(it_growth, "RR_itero_fish_w_growth.csv")
+```
+
+
+#lets take a look at the offspring for the itero fish for their different spawn years, especially those with age info
+```{r}
+itero_ids <- it_growth %>% select(kid) %>% rename(ma = kid)
+itero_ids <- it_growth %>% select(kid) %>% rename(pa = kid)
+#i tried ma and pa
+inner_join(it_growth, itero_ids, by = "pa")
+#so itero fish are not parents of other itero fish
+```
+```{r}
+itero_w_ages <- it_growth %>% 
+  filter(!is.na(kid_age)) %>% 
+  rename(itero_ma = ma, itero_pa = pa, ma = kid)
+
+itero_as_ma <- inner_join(Known_Sex_Date_Ped, itero_w_ages, by = "ma")
+#55 mas
+
+itero_w_ages <- it_growth %>% 
+  filter(!is.na(kid_age)) %>% 
+  rename(itero_ma = ma, itero_pa = pa, pa = kid)
+
+itero_as_pa <- inner_join(Known_Sex_Date_Ped, itero_w_ages, by = "pa")
+#55 pas
+
+itero_as_ma
+itero_as_pa
+
+#so next step is figure out if the offspring are products of the itero fish's first or second return(and their ages)
+```
+```{r}
+itero_as_ma %>% filter(SpawnYear.x == year2)
+```
+
+
+ 
+```{r}
+Known_Sexes_fish_list %>%  count(hatchery, year)
+Known_Sexes_fish_list %>% group_by(hatchery, year) %>% count()
+trap <- read_csv("RR_steelhead_trap_counts.csv") %>% 
+  rename("Count" = "RR trap count") 
+t_count <- trap %>% group_by(Location, Year)
+
+breakby4 <- function(S) {
+  S <- as.character(S)
+  R <- floor(nchar(S) / 4)
+  sapply(1:R, function(i) str_sub(S, 1 + 4 * (i - 1), 4 + 4 * (i - 1))) %>%
+    as.integer()
+}
+
+spawner2 <- Known_Sexes_fish_list %>%
+  mutate(year_list = map(year, breakby4)) %>%
+  unnest(year_list) %>%
+  rename(years = year) %>%
+  mutate(year = year_list) %>%
+  select(-year_list) %>%
+  mutate(spawn_date = str_split(spawner_group, pattern = ",")) %>%
+  unnest(cols = spawn_date) %>%
+  mutate(dayofyear = yday(mdy(spawn_date))) %>% 
+  filter(hatchery != "Coyote_Valley,Warm_Springs")
+
+s_count <- spawner2 %>% count(hatchery, year)
+
+
+ggplot()+
+  geom_point(data = s_count, aes(x= year, y = n, color = hatchery))+
+  geom_point(data = t_count, aes(x= Year, y = Count, color = Location))+
+  geom_line(data = t_count, aes(x= Year, y = Count, color = Location))
+
+```
+ 
+```{r}
+s_2 <- s_count %>% rename(spawn_count = n)
+t_2 <- t_count %>% rename(trap_count = Count, hatchery = Location, year = Year)
+
+full_counts <- full_join(t_2, s_2, by = c("hatchery", "year")) %>% 
+  mutate(frac_spawn = (spawn_count/trap_count))
+
+full_counts
+
+full_counts %>% group_by(hatchery) %>% summarize(mean(frac_spawn, na.rm = T))
+
+full_counts %>% group_by(hatchery) %>% summarize(mean(spawn_count, na.rm = T), sd(spawn_count, na.rm = T))
+
+
+```
+ 
+ 

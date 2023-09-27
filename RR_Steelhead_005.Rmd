@@ -1,0 +1,5356 @@
+---
+title: "Russian River Steelhead Main Data Analyses, Notebook 5"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+library(RColorBrewer)
+library(lubridate)
+library(HDInterval)
+library(coda)
+library(naniar)
+library(reshape2)
+library(cowplot)
+
+Known_Sexes_fish_list <- read_csv("RR_steelhead_07-20_known_sexes.csv", col_names = T, cols(
+  indiv = col_character(),
+  year = col_character(),
+  spawner_group = col_character(),
+  hatchery = col_character(),
+  length = col_double(),
+  watershed = col_character(),
+  Wild = col_character(),
+  sex = col_character(),
+  new_sex = col_character()
+  ))
+Known_Sexes_Ped <- read_csv("RR_pedigree_07-20_known_sexes.csv")
+Known_Sexes_itero <- read_csv("RR_itero_known_sexes.csv")
+Known_Sex_Date_Ped <- read_csv("RR_pedigree_07-20_known_sexes_and_dates.csv")
+
+Known_Sexes_fish_list %>% filter(length < 250)
+#these fish would only be 8 inches long -- this is a metadata error, will change these values to NA
+
+Known_Sexes_fish_list <- Known_Sexes_fish_list %>% replace_with_na(replace = list(length = 203.2))
+Known_Sexes_fish_list %>% filter(length < 250)
+
+ggplot(Known_Sexes_Ped) +
+  geom_bar(aes(x = kid_age, fill = kid_year), position = "dodge")+
+  ggtitle("Age of Return by Return Year")+  
+  labs(fill="Kid Year of Return")
+
+count(Known_Sexes_Ped, kid_age)
+
+write_csv(Known_Sexes_fish_list, "RR_steelhead_07-20_known_sexes_corrected_lengths.csv")
+
+```
+
+```{r}
+Known_Sex_Date_Ped #13474
+
+k <- Known_Sex_Date_Ped %>% select(kid) %>% rename(indiv = kid)
+ma <- Known_Sex_Date_Ped %>% select(ma) %>% rename(indiv = ma)
+pa <- Known_Sex_Date_Ped %>% select(pa) %>% rename(indiv = pa)
+
+all <- bind_rows(k,ma,pa) %>% distinct() #15991
+all
+Known_Sexes_fish_list %>% 
+  count(hatchery, year)
+Known_Sexes_fish_list %>% count(Wild)
+```
+```{r}
+#want to find how many fish were marked as hatchery origin but we did not find parent pairs for them, WS 2010-2020, CV 2012-2020
+Known_Sexes_fish_list %>% count(hatchery)
+Known_Sexes_fish_list %>% filter(hatchery == "Coyote_Valley,Warm_Springs")
+Known_Sexes_fish_list %>% count(year)
+Known_Sexes_fish_list %>% count(new_sex)
+Known_Sex_Date_Ped %>% count(new_kid_sex)
+
+fishies_list <- Known_Sexes_fish_list %>% 
+  separate(hatchery,into = c("hatchery1", "hatchery2"), sep = ",") %>% 
+  separate(year, into = c("year1", "year2"), sep = ",") 
+
+fishies_list$year1 <- as.numeric(fishies_list$year1)
+fishies_list$year2 <- as.numeric(fishies_list$year2)
+
+fishies <- fishies_list %>% 
+  filter(hatchery1 == "Warm_Springs" & year1 >= 2010 | hatchery2 == "Warm_Springs" & year1 >= 2010 | hatchery1 == "Coyote_Valley" & year1 >= 2012)
+fishies
+#14277 fish that could potentially have their parents identified in the dataset
+
+fishies %>% 
+  filter(Wild == "wild", year1 == 2010)
+
+full_meta <- read_csv("RR_07-20_metadata.csv")
+full_meta %>% filter(Wild == "wild") %>% arrange(COLLECTION_DATE)
+
+#2012-2020 - for figuring out the % adipose fin clips missed in juvenilles from 2012-2020
+fish_12_20 <- fishies_list %>% 
+  filter(hatchery1 == "Warm_Springs" & year1 >= 2012 & year1 <= 2020 | hatchery2 == "Warm_Springs" & year1 >= 2012 & year1 <= 2020 | hatchery1 == "Coyote_Valley" & year1 >= 2012 & year1 <= 2020)
+#12810 fish
+
+fish_12_20 %>% count(Wild) # 509 fish recorded as "wild" by hatchery staff at least once
+fish_12_20 %>% filter(Wild != "hatchery") %>% 
+  inner_join(Known_Sex_Date_Ped, by= c("indiv" = "kid")) # 343 'wild' fish with hatchery parents
+####
+#2014-2020 - for figuring out the % adipose fin clips missed in juvenilles from 2012-2020
+fish_14_20 <- fishies_list %>% 
+  filter(hatchery1 == "Warm_Springs" & year1 >= 2014 & year1 <= 2020 | hatchery2 == "Warm_Springs" & year1 >= 2014 & year1 <= 2020 | hatchery1 == "Coyote_Valley" & year1 >= 2014 & year1 <= 2020)
+#9668 fish
+
+fish_14_20 %>% count(Wild) # 334 fish recorded as "wild" by hatchery staff at least once
+fish_14_20 %>% filter(Wild != "hatchery") %>% 
+  inner_join(Known_Sex_Date_Ped, by= c("indiv" = "kid")) # 261 'wild' fish with hatchery parents
+####
+fishies_list %>% count(year1, hatchery1, Wild)
+fishies %>%  count(year1, hatchery1, Wild)
+```
+
+```{r}
+fishies 
+#okay, I have the subset of the data that I want  in "fishies" now I need to compare the list of indiv in fishies to the list of kid in Known_Sex_Date_Ped. How many indiv are not in the kid list? 
+
+inner_join(Known_Sex_Date_Ped, fishies, by= c("kid" = "indiv"))
+#13004 in both datasets
+anti_join(Known_Sex_Date_Ped, fishies, by= c("kid" = "indiv")) %>% 
+  select(SpawnYear, kid_year, ma_hatchery, kid_hatchery, everything())
+anti_join(Known_Sex_Date_Ped, fishies, by= c("kid" = "indiv")) %>% 
+  select(SpawnYear, kid_year, ma_hatchery, kid_hatchery, everything()) %>% 
+  filter(ma_hatchery != kid_hatchery)
+#3 kids that returned to CV in 2010 but parents from WS are in the pedigree but not my "fishies" list and 4 kids that returnt to cV in 2011 but parents from WS and are in the pedigree but not the "fishies" list...
+
+# the fractionof broodstock form WS 2010-20, CV 2012-20 that were assigned parents
+13011/14277 # 13004 from line 90 and add 7 more from above(line 115), total is on line 72
+
+anti_join(fishies, Known_Sex_Date_Ped, by= c("indiv" = "kid"))  %>% 
+  count(Wild)
+#1096 fish are recored as hatchery origin but no parents assigned
+
+#WS 2010-2020, cv 2012-2020
+1096/13746 #frac of metadata hatchery origin fish whose parents weren't identified
+# 0.0797
+# 8.0% of hatchery origin fish did not have their parents identified 
+
+#cv only
+fishies2 <- fishies %>% 
+  filter((hatchery1 == "Coyote_Valley" & year1 >= 2012))
+fishies2 #5189
+fishies2 %>% count(Wild) #5152 hatchery origin
+
+anti_join(fishies2, Known_Sex_Date_Ped, by= c("indiv" = "kid")) %>% 
+  count(Wild)
+#347
+347/5152 #0.06735248 or 6.7% of hatchery fish don't have parents identified at CV
+
+#Ws only
+fishies3 <- fishies %>% 
+  filter(hatchery1 == "Warm_Springs" & year1 >= 2010 | hatchery2 == "Warm_Springs" & year1 == 2010 | hatchery2 == "Warm_Springs" & year1 == 2011 )
+fishies3 # 9094
+fishies3 %>% count(Wild) # 8594	hatchery origin fish
+#I filterd for the the hatchery2 WS fish from 2010 and 2011 to only get the fish that returned to both hatcheries that aren't already in the CV list
+
+anti_join(fishies3, Known_Sex_Date_Ped, by= c("indiv" = "kid"))  %>% 
+  count(Wild)
+# 749
+
+749/8594 # 0.08715383 or 8.7% of ws hatchery fish don't have parents assigned
+
+fishies %>% count(Wild) # 531 fish recorded as "wild" by hatchery staff at least once
+fishies %>% filter(Wild != "hatchery") %>% 
+  inner_join(Known_Sex_Date_Ped, by= c("indiv" = "kid")) # 354 "wild" fish with parents identified in our pedigree
+# 354 misidentified fish, which is 92% of the misidentified fish (8% hatchery fish do not have parents identified)
+#354/x = 0.92, x = 385 misidentified fish
+#so 385/531 = 72.5% of "wild" fish were misidentified
+#146/14277 = 0.01023 = pNOB --> 1.0%
+
+
+
+fishies2 %>%  count(Wild) #37 wild fish at CV
+fishies2 %>% filter(Wild != "hatchery") %>% 
+  inner_join(Known_Sex_Date_Ped, by= c("indiv" = "kid")) # 30 "wild" fish with parents identified in our pedigree at CV
+# 30 misidentified fish, which is 92%
+# 30/x = 0.92, x = 33
+# 33/37 = 89.2%  of CV "wild" fish were misidentifed
+4/5189 #0.0007708614  --> 0.08% pNOB at CV
+
+fishies3 %>% count(Wild) #494 wild fish at WS
+fishies3 %>% filter(Wild != "hatchery") %>% 
+  inner_join(Known_Sex_Date_Ped, by= c("indiv" = "kid")) # 324 "wild" fish with parents identifed in our pedigree at WS
+# 324 misidentified fish, which is 92%
+# 324/x = 0.92, x = 352
+# 352/494 = 71.3% of WS "wild" fish were misidentified
+142/9088 # 0.015625 --> 1.6% pNOB at WS
+
+
+```
+```{r}
+misid <- fishies %>% filter(Wild != "hatchery") %>% 
+  inner_join(Known_Sex_Date_Ped, by= c("indiv" = "kid")) %>% 
+  count(year1) %>% 
+  rename(fish_with_broodstock_parents = n)
+
+frac_wild <- fishies %>% 
+  filter(Wild != "hatchery") %>% 
+  count(year1) %>% 
+  rename(recorded_as_wild = n) %>% 
+  left_join(misid, by = "year1") %>% 
+  mutate(frac_wild_fish_mis_identified = (fish_with_broodstock_parents)/(recorded_as_wild))
+
+frac_wild
+
+#frac if wild fish that were misidentified, through 2017
+frac_wild %>% 
+  ungroup() %>% 
+  filter(year1 <=2017) %>% 
+  summarize(frac_mis = sum(fish_with_broodstock_parents)/sum(recorded_as_wild))
+
+#frac of wild fish that were misidentified, through 2020
+frac_wild %>% 
+  ungroup() %>% 
+  summarize(frac_mis = sum(fish_with_broodstock_parents)/sum(recorded_as_wild))
+sum(frac_wild$fish_with_broodstock_parents)
+sum(frac_wild$recorded_as_wild)
+```
+
+
+pNOB
+```{r}
+# fish spawned at WS 2010-20, CV 2012-20
+in_the_ped <- fishies %>% 
+  inner_join(Known_Sex_Date_Ped, by= c("indiv" = "kid")) %>% 
+  select(indiv) %>% 
+  mutate(parents_identified = "yes")
+
+fish_data <- fishies %>% 
+  left_join(in_the_ped, by = "indiv") %>% 
+  mutate(wild = ifelse(Wild != "hatchery", yes = "nat_origin", no = "hatchery_origin")) %>% 
+  select(-Wild)
+
+fish_data %>% 
+  group_by(parents_identified) %>% 
+  count(wild)
+
+fish_data %>% 
+  count(year1)
+
+fish_data %>% 
+  group_by(wild) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(frac = (n/sum(n))) %>% 
+  mutate(percent = frac*100) %>% 
+  filter(wild == "nat_origin") #pNOB (based on metadata records)
+
+fish_data %>% 
+  group_by(year1, wild) %>% 
+  count() %>% 
+  ungroup() %>% 
+  group_by(year1) %>% 
+  mutate(frac = (n/sum(n))) %>% 
+  mutate(percent = frac*100) %>% 
+  filter(wild == "nat_origin") #pNOB by year (based on metadata records)
+
+fish_data %>% 
+  group_by(hatchery1, wild) %>% 
+  count() %>% 
+  ungroup() %>% 
+  group_by(hatchery1) %>% 
+  mutate(frac = (n/sum(n))) %>% 
+  mutate(percent = frac*100) %>% 
+  filter(wild == "nat_origin") #pNOB by hatchery(based on metadata records)
+
+fish_data %>% 
+  group_by(hatchery1, year1, wild) %>% 
+  count() %>% 
+  ungroup() %>% 
+  group_by(hatchery1, year1) %>% 
+  mutate(frac = (n/sum(n))) %>% 
+  mutate(percent = frac*100) %>% 
+  filter(wild == "nat_origin") # pNOB by hatchery and year (metadata records)
+
+```
+adjusted pNOB
+```{r}
+# fish spawned at WS 2010-20, CV 2012-20
+
+#fraction of fish that were hatchery origin but parents not identified
+fish_data %>% 
+  group_by(parents_identified, wild) %>% 
+  count() %>% 
+  ungroup() %>%
+  group_by(wild) %>% 
+  arrange(wild) %>% 
+  mutate(frac = n/sum(n)) 
+# 8.0% of metadata hatchery orign fish did not have parents identified
+# 66.7% of "nat_orign" fish had their parents identified
+
+#by hatchery
+#fraction of fish that were hatchery origin but parents not identified
+fish_data %>% 
+  group_by(hatchery1, parents_identified, wild) %>% 
+  count() %>% 
+  ungroup() %>%
+  group_by(hatchery1, wild) %>% 
+  arrange(hatchery1, wild) %>% 
+  mutate(frac = n/sum(n)) 
+# CV 6.8% of hatchery origin fish, parents not found
+# WS 8.7% of hatchery origin fish, parents not found
+
+```
+
+
+```{r}
+Known_Sex_Date_Ped 
+
+ggplot(data = Known_Sex_Date_Ped)+
+  geom_histogram(aes(x = as.numeric(kid_dayofyear), y=..density..))+
+  ggtitle("Histogram of Kid Spawn Day")+
+  xlab("Spawn Date (Day of Year)")
+
+ggplot(data = Known_Sex_Date_Ped)+
+  geom_histogram(aes(x = as.numeric(parent_dayofyear), y=..density..))+
+  ggtitle("Histogram of Parent Spawn Day")+
+  xlab("Spawn Date (Day of Year)")
+
+
+ggplot(data = Known_Sex_Date_Ped)+
+  geom_histogram(aes(x = as.numeric(parent_dayofyear), y=..count..))+
+  ggtitle("Histogram of Parent Spawn Day")+
+  xlab("Spawn Date (Day of Year)")
+
+Known_Sex_Date_Ped %>% 
+  filter(kid_dayofyear <300) %>% 
+  ggplot()+
+  geom_histogram(aes(x = as.numeric(kid_dayofyear), y=..count..), binwidth = 5)+
+  ggtitle("Histogram of Spawn Date")+
+  xlab("Spawn Date (Day of Year)")
+
+Known_Sex_Date_Ped %>% 
+  filter(kid_dayofyear <300) %>%
+  summarize(mean(as.numeric(kid_dayofyear)), sd(as.numeric(kid_dayofyear)), var(as.numeric(kid_dayofyear)))
+
+```
+
+
+```{r}
+ggplot(data = Known_Sex_Date_Ped)+
+  geom_bar(aes(x = kid_age ,fill = new_kid_sex))+
+  ggtitle("Age and Sex")+
+  xlab("Spawn Date (Day of Year)")+
+  labs(fill="Sex")
+
+ggplot(data = Known_Sex_Date_Ped)+
+  geom_boxplot(aes(y = as.numeric(kid_dayofyear), x = as.character(kid_age),fill=new_kid_sex))+
+  ggtitle("Spawn Date sorted by Age of Return")+
+  xlab("Age of Return (years)")+
+  ylab("Spawn Date (Day of Year)")+
+  labs(fill="Sex")
+
+ggplot(data = Known_Sex_Date_Ped)+
+  geom_boxplot(aes(y = as.numeric(parent_dayofyear)))+
+  ggtitle("Spawn Day")+
+  ylab("Spawn Date (Day of Year)")
+
+ggplot(data = Known_Sex_Date_Ped)+
+  geom_boxplot(aes(y = as.numeric(kid_dayofyear),fill= new_kid_sex))+
+  ggtitle("Spawn day")+
+  ylab("Spawn Date (Day of Year)")+
+  labs(fill="Sex")
+
+#Age of return by year and by cohort
+ggplot(data = Known_Sex_Date_Ped)+
+  geom_bar(aes(x = kid_age, y=..count.., fill= as.character(SpawnYear)), position = "dodge")+
+  ggtitle("Age of Return by Cohort")+
+  xlab("Age at Return")+
+  labs(fill= "Kid Birth Year")
+
+Known_Sex_Date_Ped %>% 
+  filter(!is.na(new_kid_sex), kid_age != 5) %>% 
+  group_by(new_kid_sex, as.character(SpawnYear)) %>% 
+  count(kid_age) %>% 
+  mutate(freq = n/sum(n)) %>% 
+  rename(cohort_year = 'as.character(SpawnYear)') %>% 
+  filter(cohort_year < 2018) %>% 
+  ggplot()+
+  geom_col(aes(x = kid_age, y=freq, fill= new_kid_sex), position = "dodge")+
+  ggtitle("Age at Return by Cohort")+
+  xlab("Age at Return")+
+  labs(fill= "Sex")+
+  facet_grid(new_kid_sex~cohort_year)
+
+ggplot(data = Known_Sex_Date_Ped) +
+  geom_bar(aes(x = kid_age, fill = as.character(kid_year)), position = "dodge")+
+  ggtitle("Age of Return by Return Year")+  
+  labs(fill="Year of Return")
+#The above graphs have the same data set,but the colors/corresponding years change
+
+####facet-wrap makes this data much easier to interpret
+ggplot(data = Known_Sex_Date_Ped)+
+  geom_bar(aes(x = kid_age, y=..count.., fill= as.character(SpawnYear)), position = "dodge")+
+  ggtitle("Age at Return by Cohort")+
+  xlab("Age at Return")+
+  labs(fill= "Birth Year")+
+  facet_wrap(~as.character(SpawnYear))
+
+ggplot(data = Known_Sex_Date_Ped) +
+  geom_bar(aes(x = kid_age, fill = as.character(kid_year)), position = "dodge")+
+  ggtitle("Age at Return by Return Year")+  
+  labs(fill="Year of Return")+
+  facet_wrap(~as.character(kid_year))
+
+Known_Sex_Date_Ped %>% count(kid_year, kid_age)
+Known_Sex_Date_Ped %>% count(SpawnYear, kid_age)
+Known_Sex_Date_Ped %>% filter(kid_age == 4) %>% count(SpawnYear, kid_age)
+
+```
+
+```{r}
+kruskal.test(kid_dayofyear ~ parent_dayofyear, data = Known_Sex_Date_Ped)
+
+kruskal.test(kid_dayofyear ~ as.character(kid_age), data = Known_Sex_Date_Ped)
+
+kruskal.test(as.character(kid_age) ~ new_kid_sex, data = Known_Sex_Date_Ped)
+```
+
+```{r}
+#first, sepearate kid, pa, and ma info
+
+KidMeta <- Known_Sex_Date_Ped %>% 
+  dplyr::select(kid, new_kid_sex, kid_year, new_kid_sg, kid_dayofyear, kid_hatchery, new_parent_sg, parent_dayofyear, kid_age)
+PaMeta <- Known_Sex_Date_Ped %>% 
+  dplyr::select(kid, pa, new_pa_sex, pa_hatchery, SpawnYear, new_parent_sg, parent_dayofyear)
+MaMeta <- Known_Sex_Date_Ped %>% 
+  dplyr::select(kid, ma, new_ma_sex, ma_hatchery, SpawnYear, new_parent_sg, parent_dayofyear)
+
+
+KidMeta
+PaMeta
+MaMeta
+```
+
+
+
+```{r}
+#what to get ages of parents....can't figure it out on how to do so...basically i need to find parents from the "kid" list and extract the age as pa and ma ages so we can then test the heritability of age...can't figure out the best way to do this....
+
+a <- PaMeta %>%  count(pa) %>% arrange(desc(n)) 
+mean(a$n)
+#5425 pas in pedigree
+#the indiv with most offspring: M036461, 43 offspring in pedigree
+#mean number of offspring: 2.483687
+
+a <- MaMeta %>%  count(ma) %>% arrange(desc(n))
+mean(a$n)
+#3239 mas in pedigree
+#the indiv with most offspring: M036463, 67 offspring in pedigree
+#mean number of offspring: 4.159926
+
+pa_list <- PaMeta %>% 
+  dplyr::select(-kid) %>% 
+  rename(indiv = pa)
+
+ids_and_age <- KidMeta %>% select(kid, kid_age) %>% rename(indiv = kid)
+
+PaAge <- left_join(pa_list, ids_and_age, by = "indiv") %>% 
+  rename(pa_age = kid_age) %>% 
+  select(indiv, pa_age, everything())
+
+ma_list <- MaMeta %>% 
+  select(-kid) %>% 
+  rename(indiv = ma)
+
+MaAge <- left_join(ma_list, ids_and_age, by = "indiv") %>% 
+  rename(ma_age = kid_age) %>% 
+  select(indiv, ma_age, everything())
+
+dis.pa <- distinct(PaAge, indiv)
+dis.ma <- distinct(MaAge, indiv)
+
+#list of pa and ma with duplicates removed
+SingleCopyPa <- PaAge %>% group_by(indiv) %>% sample_n(.,1) %>% ungroup()
+SingleCopyMa <- MaAge %>% group_by(indiv) %>% sample_n(.,1) %>% ungroup()
+
+SingleCopyPa %>%  count(pa_age)
+SingleCopyMa %>% count(ma_age)
+
+PaAge; MaAge
+dis.pa; dis.ma
+SingleCopyPa; SingleCopyMa
+```
+
+
+```{r}
+ggplot(data = KidMeta)+
+  geom_histogram(aes(x=kid_age, y =..density..), binwidth = 1)+
+  ggtitle("Kid Age Distribution")
+
+ggplot(data = SingleCopyPa)+
+  geom_histogram(aes(x=pa_age, y = ..density..), binwidth = 1)+
+  ggtitle("Father Age Distribution")
+
+ggplot(data = SingleCopyMa)+
+  geom_histogram(aes(x=ma_age, y = ..density..), binwidth = 1)+
+  ggtitle("Mother Age Distribution")
+#this shows almost all mothers were 3 yrs old, and almost half the males were 2 years old
+
+#boxplots of age
+ggplot(data=KidMeta)+
+  geom_boxplot(aes(x=as.character(kid_age),y=as.numeric(kid_dayofyear)))+
+  ggtitle("Kid Age, Day of Year") +
+  ylim(0, 110)
+
+ggplot(data=SingleCopyPa)+
+  geom_boxplot(aes(x=as.character(pa_age),y=as.numeric(parent_dayofyear)))+
+  ggtitle("Pa Age, Day of Year")+
+  ylim(0, 110)
+
+ggplot(data = SingleCopyMa)+
+  geom_boxplot(aes(x=as.character(ma_age), y = as.numeric(parent_dayofyear)))+
+  ggtitle("Ma Age, Day of Year")+
+  ylim(0, 110)
+
+
+```
+
+```{r}
+#next steps...add column for ma an pa ages to main data set and then run tests for heritability of age-of-return
+#also compare week of return to age
+#need to figure out how to assess family sizes
+
+PaID.Age <- SingleCopyPa %>% select(indiv, pa_age) %>% rename(pa = indiv)
+PaID.Age
+
+MaID.Age <- SingleCopyMa %>% select(indiv, ma_age) %>% rename(ma = indiv)
+MaID.Age
+
+Kid_Pa_Ma_Age <- Known_Sex_Date_Ped %>% 
+  left_join(PaID.Age, by = "pa") %>% 
+  left_join(MaID.Age, by = "ma")
+Kid_Pa_Ma_Age
+write_csv(Kid_Pa_Ma_Age, "RR_2007-2020_pedigree_ages.csv")
+
+```
+
+
+```{r}
+kruskal.test(kid_age ~ pa_age, data = Kid_Pa_Ma_Age)
+kruskal.test(kid_age ~ ma_age, data = Kid_Pa_Ma_Age)
+```
+
+```{r}
+# Make a dataframe for parentpairs
+ppairs <- data.frame(cbind(paste(Kid_Pa_Ma_Age$pa, Kid_Pa_Ma_Age$ma, sep="_"), Kid_Pa_Ma_Age$SpawnYear),stringsAsFactors=FALSE)
+names(ppairs)<-c("Pair", "SpawnYear")
+
+ppairs
+
+#### (2) want to look at relative reproductive success: males, females and pairs ####
+pairsrrs <- data.frame(table(ppairs$Pair))
+pasrrs <- data.frame(table(Kid_Pa_Ma_Age$pa))
+masrrs <- data.frame(table(Kid_Pa_Ma_Age$ma))
+
+pairsrrs
+pasrrs
+masrrs
+#changing to ggplot format##
+pairsrrs$type <- "pair"
+pairsrrs <- pairsrrs %>% rename(ID = Var1)
+pasrrs$type <- "pa"
+pasrrs <- pasrrs %>% rename(ID = Var1)
+masrrs$type <- "ma"
+masrrs <- masrrs %>% rename(ID = Var1)
+
+All.rrs <- bind_rows(pairsrrs, pasrrs, masrrs)
+All.rrs
+```
+
+```{r}
+
+pair.hist <- ggplot()+
+  geom_histogram(data = pairsrrs, aes(x = Freq))
+pa.hist <- ggplot()+
+  geom_histogram(data = pasrrs, aes(x = Freq))
+ma.hist <- ggplot()+
+  geom_histogram(data = masrrs, aes(x = Freq))
+pair.hist
+pa.hist
+ma.hist
+
+All.rrs$type  <- factor(All.rrs$type, levels=c("pair", "pa", "ma"))
+all.three <- ggplot(data = All.rrs)+
+  geom_histogram(aes(x = Freq, fill = type), position = "dodge", binwidth = 1)+
+  ggtitle("Reproductive Success")+
+  xlab("Number of Offspring")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+
+all.density <- ggplot(data = All.rrs)+
+  geom_histogram(aes(x = Freq, y=..density.., fill = type), position = "dodge", binwidth = 1)+
+  ggtitle("Relative Reproductive Success")+
+  xlab("Number of Offspring")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+all.den.fac <- ggplot(data = All.rrs)+
+  geom_histogram(aes(x = Freq, y=..density.., fill = type), position = "dodge", binwidth = 1)+
+  ggtitle("Relative Reproductive Success")+
+  xlab("Number of Offspring")+
+  theme_classic()+
+  facet_grid(~type)+
+  scale_fill_brewer(palette = "Dark2")
+
+all.three
+all.density
+all.den.fac
+
+All.rrs %>% count(type)
+All.rrs %>% count(type, Freq)
+All.rrs %>% arrange(desc(Freq))
+```
+```{r}
+#are the three groups of reproductive success significantly different? 
+kruskal.test(type~Freq, data = All.rrs)
+
+All.rrs %>% group_by(type) %>% summarise(mean(Freq))
+```
+
+```{r}
+pairs.years <- data.frame(table(ppairs))
+pairs.years
+
+years.count <- ggplot(data = pairs.years)+
+  geom_histogram(aes(x = Freq, fill = SpawnYear), position = "dodge", binwidth = 1)+
+  ggtitle("Reproductive Success of Parent Pairs")+
+  xlab("Number of Offspring")+
+  facet_wrap(~SpawnYear)
+
+years.prop <- ggplot(data = pairs.years)+
+  geom_bar(aes(x = Freq, y=..prop.., fill = SpawnYear), position = "dodge")+
+  ggtitle("Relative Reproductive Success of Parent Pairs")+
+  xlab("Number of Offspring")+
+  facet_wrap(~SpawnYear)
+
+years.count
+years.prop
+```
+
+```{r}
+Kid_Pa_Ma_Age
+
+ageherit <- Kid_Pa_Ma_Age %>% select(kid_sex, kid_age, pa_age, ma_age) %>% 
+  mutate(mid_age = (pa_age + ma_age)/2) %>% 
+  mutate(pair = paste(pa_age, ma_age, sep="_"))
+
+ageherit %>% filter(!is.na(mid_age))
+
+# Proportion of offspring come back as 2-3-4 year-olds for each mate-pair combination
+ageherit<-ageherit[complete.cases(ageherit),]
+allkids <- prop.table(table(ageherit$pair, ageherit$kid_age), 1)
+maleoffs <- prop.table(table(ageherit$pair[ageherit$kid_sex=="Male"], ageherit$kid_age[ageherit$kid_sex=="Male"]), 1)
+femaleoffs <- prop.table(table(ageherit$pair[ageherit$kid_sex=="Female"], ageherit$kid_age[ageherit$kid_sex=="Female"]), 1)
+allkids
+maleoffs
+femaleoffs
+
+chisq.test(ageherit$mid_age, ageherit$kid_age)
+chisq.test(ageherit$pa_age, ageherit$kid_age)
+chisq.test(ageherit$ma_age, ageherit$kid_age)
+# p<0.00001 so reject null and accept that there is a difference.
+
+mgen <- data.frame(cbind(paste(Kid_Pa_Ma_Age$kid, Kid_Pa_Ma_Age$kid_year, sep="_"), paste(Kid_Pa_Ma_Age$pa, Kid_Pa_Ma_Age$SpawnYear, sep="_"), paste(Kid_Pa_Ma_Age$ma, Kid_Pa_Ma_Age$SpawnYear, sep="_")), stringsAsFactors=FALSE)
+names(mgen) <- c("kid", "pa", "ma")
+mgen$pair <- paste(mgen$pa, mgen$ma, sep="--")
+
+mgen 
+
+reuse <- data.frame(unique(mgen$pair))
+names(reuse)<-c("pa_ma")
+reuse <-colsplit(reuse$pa_ma, "--", c("pa","ma"))
+multidad <- table(reuse$pa)
+table(multidad)
+multimom <- table(reuse$ma)
+table(multimom)
+
+```
+
+```{r}
+Kid_Pa_Ma_Age_Pair <- Kid_Pa_Ma_Age %>%  mutate(pair = paste(pa, ma, sep = ":"))
+# find full-sib families
+
+full.sibs <- tapply(Kid_Pa_Ma_Age_Pair$kid, Kid_Pa_Ma_Age_Pair$pair, function(x) x)
+
+siblist <- sapply(full.sibs, length)
+
+sibs <- table(siblist)
+sibs <- as_tibble(sibs)
+sibs
+sibs.names <- sibs %>% rename(Number_Offspring = siblist) %>% rename(Occurrences = n)
+sibs.names$Number_Offspring <- as.numeric(sibs.names$Number_Offspring)
+sibs.names$Occurrences <- as.numeric(sibs.names$Occurrences)
+sibs.names
+
+ggplot(data = sibs.names)+
+  geom_point(aes(x = Number_Offspring, y = Occurrences))+
+  ggtitle("Number of Offspring per Parent Pair")+
+  xlab("Number of Offspring for a Parent Pair")
+```
+
+why only one December-spawning fish and not two? 
+    This fish is a kid in the data set and was spawned 12/9/2012 but no offspring from this fish returned
+    The parents of this fish were spawned 2/19/2009
+
+Ma and kid age graphs -->graph by relative frequencey, transition probablilities
+
+Relative repro success --> pair/ma/pa --> get graph in relative freq
+
+find kids indicated as natrual origin (wild)
+```{r}
+Known_Sexes_fish_list %>% filter(Wild !="hatchery") %>% count(year, Wild)
+Known_Sexes_fish_list$Wild  <-  recode(Known_Sexes_fish_list$Wild, "hatchery,wild" = "wild,hatchery")
+Known_Sexes_fish_list %>% filter(Wild !="hatchery") %>% count(year, Wild)
+Known_Sexes_fish_list %>% count(Wild)
+Known_Sexes_fish_list %>% filter(Wild !="hatchery") %>% count(hatchery, year, Wild) %>%  arrange(hatchery, year)
+Known_Sexes_fish_list %>% filter(Wild !="hatchery") %>% count(hatchery, Wild)
+```
+Are there any "wild" fish that have been assigned hatchery parents and aren't actually wild origin? 
+```{r}
+wild.list <- Known_Sexes_fish_list %>% select(indiv, Wild) %>% rename(kid = indiv, kid_wild = Wild)
+wild.kid <- Known_Sex_Date_Ped %>% 
+  left_join(wild.list, by = "kid") %>% 
+  select(kid, ma, pa, kid_wild, everything())
+
+wild.kid %>% count(kid_wild)
+wild.kid %>% filter(kid_wild != "hatchery") %>% count(kid_year, kid_wild)
+wild.kid %>% filter(kid_wild != "hatchery") %>% count(kid_hatchery, kid_year, kid_wild)
+wild.kid %>% filter(kid_wild != "hatchery") %>% count(kid_hatchery, kid_wild)
+```
+
+```{r}
+Dec.rm <- Kid_Pa_Ma_Age %>% filter(kid_dayofyear < 200)
+Dec.rm$kid_dayofyear <- as.numeric(Dec.rm$kid_dayofyear)
+Dec.rm$parent_dayofyear <- as.numeric(Dec.rm$parent_dayofyear)
+  
+Dec.rm %>% filter(is.na(parent_dayofyear))
+
+Dec.rm %>% 
+  filter(!is.na(parent_dayofyear)) %>% 
+  ggplot()+ 
+  geom_count(aes(x = parent_dayofyear, y = kid_dayofyear))+
+  xlim(0,115)+
+  ylim(0,115)+
+  geom_smooth(method = "lm", aes(x = parent_dayofyear, y = kid_dayofyear), color="#1B9E77")+
+  theme_classic()
+
+###lm formula is lm(y~x), so you are saying y is predicted by x####
+
+Dec.rm %>% 
+  filter(!is.na(parent_dayofyear)) %>% 
+  lm(kid_dayofyear ~ parent_dayofyear,.) %>% 
+  summary()
+
+```
+Add length data to Pedigree
+And age data to fish list
+```{r}
+age.list <- Known_Sex_Date_Ped %>% select(kid,kid_age) %>% rename(indiv = kid, age = kid_age)
+fish_list_age <- Known_Sexes_fish_list %>% left_join(age.list, by = "indiv")
+
+length.list <- Known_Sexes_fish_list %>% select(indiv, length)
+kid.length <- length.list %>% rename(kid = indiv, kid_length = length)
+ma.length <- length.list %>% rename(ma = indiv, ma_length = length)
+pa.length <- length.list %>% rename(pa = indiv, pa_length = length)
+
+Ped_length_age <- Kid_Pa_Ma_Age %>% left_join(kid.length, by = "kid") %>% 
+  left_join(ma.length, by = "ma") %>% 
+  left_join(pa.length, by = "pa")
+write_csv(Ped_length_age, "RR_2007-2020_pedigree_ages_lengths.csv")
+```
+
+
+```{r}
+#Age, Sex, length data
+ggplot(data = fish_list_age)+
+  geom_histogram(aes(x = length, y =..density.., fill = new_sex), binwidth = 10, position = "dodge")
+
+
+ggplot(data = Ped_length_age)+
+  geom_histogram(aes(x = kid_length, y =..density.., fill = as.character(kid_age)), position = "dodge")
+#removed the one five year old kid from data
+Ped_length_age_rm5yr <- Ped_length_age %>% filter(kid_age < 5)
+
+ggplot(data = Ped_length_age_rm5yr)+
+  geom_histogram(aes(x = kid_length, y =..count.., fill = as.character(kid_age)), position = "dodge")
+
+ggplot(data = Ped_length_age_rm5yr)+
+  geom_histogram(aes(x = kid_length, y =..density.., fill = as.character(kid_age)), position = "dodge")
+
+display.brewer.pal(8,"Dark2")
+brewer.pal(8, "Dark2")
+
+KidAgeL <- Ped_length_age_rm5yr %>% 
+  filter(!is.na(kid_length)) %>% 
+  filter(!is.na(kid_age)) %>% 
+  ggplot()+
+  geom_histogram(aes(x = kid_length, y =..density.., fill = as.character(kid_age)), position = "dodge", binwidth = 25.4)+
+  #ggtitle("Age and Length")+ 
+  labs(fill = "Age", y = "Density")+
+  xlab("Length (mm)")+
+  theme_classic()+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b"))+
+  scale_x_continuous(breaks = seq(300,1000, 50))
+
+
+Ped_length_age_rm5yr %>% 
+  group_by(as.character(kid_age)) %>% 
+  summarise(mean(kid_length, na.rm = T), sd(kid_length, na.rm = T))
+
+Ped_length_age_rm5yr %>% 
+  group_by(as.character(kid_age)) %>% 
+  count()
+
+m <- Ped_length_age_rm5yr %>% 
+  group_by(as.character(kid_age)) %>% 
+  summarise(mean(kid_length, na.rm = T), sd(kid_length, na.rm = T)) %>% 
+  rename(Z = 'mean(kid_length, na.rm = T)', kid_age = 'as.character(kid_age)')
+  
+facet_len <- ggplot(data = Ped_length_age_rm5yr)+
+  geom_histogram(aes(x = kid_length, y =..density.., fill = as.character(kid_age)), position = "dodge", binwidth = 25)+
+  ggtitle("Age and Length")+ 
+  labs(fill = "Age")+
+  xlab("Length (mm)")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")+
+  facet_grid(as.character(kid_age) ~ .)+
+  scale_x_continuous(breaks = seq(350,1000,25))+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.75))+
+  geom_vline(data = m, aes(xintercept =Z))
+
+ggplot(data = Ped_length_age_rm5yr)+
+  geom_histogram(aes(y = kid_length, x =..density.., fill = as.character(kid_age)), position = "dodge", binwidth = 25)+
+  ggtitle("Age and Length")+ 
+  labs(fill = "Age")+
+  ylab("Length (mm)")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")+
+  facet_wrap(~as.character(kid_age))+
+  scale_y_continuous(breaks = seq(350,1000,25))+
+  geom_hline(data = m, aes(yintercept = Z))
+
+#removed the unknown sexes
+KidAgeLSex <- ggplot(data = subset(Ped_length_age_rm5yr, !is.na(new_kid_sex)))+
+  geom_histogram(aes(x = kid_length, y =..density.., fill = as.character(kid_age)), position = "dodge", binwidth = 25)+
+  ggtitle("Age and Length, Seperated by Sex")+ 
+  labs(fill = "Age")+
+  xlab("Length (mm)")+
+  facet_wrap("new_kid_sex")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+                    
+ #return year                   
+ggplot(data = Ped_length_age_rm5yr)+
+  geom_histogram(aes(x = kid_length, y =..density.., fill = as.character(kid_age)), position = "dodge", binwidth = 10)+
+  ggtitle("Age and Length, Seperated by spawn year")+ 
+  labs(fill = "Age")+
+  xlab("Length (mm)")+
+  facet_wrap("kid_year")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+
+#cohort year
+ggplot(data = Ped_length_age_rm5yr)+
+  geom_histogram(aes(x = kid_length, y =..density.., fill = as.character(kid_age)), position = "dodge", binwidth = 10)+
+  ggtitle("Age and Length, Seperated by cohort year")+ 
+  labs(fill = "Kid Age")+
+  xlab("Kid Length (mm)")+
+  facet_wrap("SpawnYear")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+                    
+KidAgeL
+KidAgeLSex
+facet_len
+```
+
+```{r}
+freq_len <- Ped_length_age_rm5yr %>% 
+  filter(!is.na(kid_length)) %>% 
+  filter(!is.na(kid_age)) %>% 
+  ungroup() %>% 
+  mutate(length_in = kid_length/25.4) %>% 
+  mutate(age_len_bin = cut_interval(length_in, length = 0.999999999 , labels = F)) %>% 
+  arrange(age_len_bin) %>% 
+  group_by(kid_age) %>% 
+  count(age_len_bin) %>% 
+  mutate(frac = n/(sum(n))) %>% 
+  mutate(bin_in = (age_len_bin + 14)) %>% 
+  mutate(bin_mm = (bin_in * 25.4)) %>% 
+  ggplot()+
+  geom_col(aes(x = bin_mm, y =frac, fill = as.character(kid_age)), position = position_dodge2(preserve = "single"))+
+  labs(fill = "Age", y = "Relative Frequency")+
+  xlab("Length (mm)")+
+  theme_classic()+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b"))+
+  scale_x_continuous(breaks = seq(300,1000, 50))+
+  scale_y_continuous(breaks = seq(0,1, 0.05))
+
+freq_len
+
+freq_len_facet <- Ped_length_age_rm5yr %>% 
+  filter(!is.na(kid_length)) %>% 
+  filter(!is.na(kid_age)) %>% 
+  ungroup() %>% 
+  mutate(length_in = kid_length/25.4) %>% 
+  mutate(age_len_bin = cut_interval(length_in, length = 0.999999999 , labels = F)) %>% 
+  arrange(age_len_bin) %>% 
+  group_by(kid_age) %>% 
+  count(age_len_bin) %>% 
+  mutate(frac = n/(sum(n))) %>% 
+  mutate(bin_in = (age_len_bin + 14)) %>% 
+  mutate(bin_mm = (bin_in * 25.4)) %>% 
+  ggplot()+
+  geom_col(aes(x = bin_mm, y =frac, fill = as.character(kid_age)), position = position_dodge2(preserve = "single"))+
+  labs(fill = "Age", y = "Relative Frequency")+
+  xlab("Length (mm)")+
+  theme_classic()+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b"))+
+  scale_x_continuous(breaks = seq(300,1000, 50))+
+  scale_y_continuous(breaks = seq(0,1, 0.05))+
+  facet_grid(kid_age~.)
+
+freq_len_facet
+```
+
+ANOVA and KW of length and age groups
+```{r}
+aov(data = Ped_length_age_rm5yr,  kid_length ~ as.character(kid_age)) %>%  
+  summary()
+
+kruskal.test(data = Ped_length_age_rm5yr, kid_length ~ as.character(kid_age)) 
+```
+
+Lets look at the moms with so many mates...
+```{r}
+ma_reuse <- reuse %>% count(ma) %>% arrange(desc(n)) %>% separate(ma, c("indiv", "year"), sep = "_") %>% rename(ma_reuse = n) %>% select(-year)
+ma_reuse_yr <- reuse %>% count(ma) %>% arrange(desc(n)) %>% separate(ma, c("indiv", "year"), sep = "_") %>% rename(ma_reuse = n)
+pa_reuse <- reuse %>% count(pa) %>% arrange(desc(n)) %>% separate(pa, c("indiv", "year"), sep = "_") %>% rename(pa_reuse = n) %>% select(-year)
+pa_reuse_yr <- reuse %>% count(pa) %>% arrange(desc(n)) %>% separate(pa, c("indiv", "year"), sep = "_") %>% rename(pa_reuse = n)
+
+fish_list_reuse <- fish_list_age %>% left_join(ma_reuse, by = "indiv") %>% 
+  left_join(pa_reuse, by = "indiv") 
+
+fish_list_reuse %>% count(ma_reuse, year) %>% arrange(desc(ma_reuse))
+fish_list_reuse %>% count(pa_reuse, year) %>% arrange(desc(pa_reuse))
+
+fish_list_reuse %>% count(ma_reuse, hatchery) %>%  arrange(desc(ma_reuse))
+fish_list_reuse %>% count(pa_reuse, hatchery) %>%  arrange(desc(pa_reuse))
+
+fish_list_reuse %>% filter(ma_reuse == 6)
+
+fish_list_reuse %>% 
+  filter(hatchery != "Coyote_Valley,Warm_Springs") %>% 
+  ggplot()+
+  geom_bar(aes(x = ma_reuse, y = ..prop..))+
+  facet_wrap(~hatchery)
+
+fish_list_reuse %>% 
+  filter(hatchery != "Coyote_Valley,Warm_Springs") %>%
+  ggplot()+
+  geom_bar(aes(x = pa_reuse, y = ..prop..))+
+  facet_wrap(~hatchery)
+
+fish_list_reuse %>%  
+  filter(!grepl(",", year)) %>% 
+  filter(year <= 2017) %>% 
+  ggplot()+
+  geom_bar(aes(x = ma_reuse, y = ..prop..))+
+  facet_wrap(~year)
+
+fish_list_reuse %>% 
+  filter(!grepl(",", year)) %>% 
+  filter(year <= 2017) %>% 
+  ggplot()+
+  geom_bar(aes(x = pa_reuse, y = ..prop..))+
+  facet_wrap(~year)
+
+fish_list_reuse %>%  
+  filter(hatchery != "Coyote_Valley,Warm_Springs") %>% 
+  filter(!grepl(",", year)) %>% 
+  filter(year <= 2017) %>% 
+  ggplot()+
+  geom_bar(aes(x = ma_reuse, y = ..prop..))+
+  facet_grid(hatchery~year)
+
+fish_list_reuse %>% 
+  filter(hatchery != "Coyote_Valley,Warm_Springs") %>%
+  filter(!grepl(",", year)) %>% 
+  filter(year <= 2017) %>% 
+  ggplot()+
+  geom_bar(aes(x = pa_reuse, y = ..prop..))+
+  facet_grid(hatchery~year)
+
+#note: if i decide to add the counts to these figures, need to remove the limits command to get it to work
+ma_re <- fish_list_reuse %>% 
+  filter(new_sex == "Female") %>% 
+  filter(!grepl(",", year)) %>% 
+  filter(year <= 2017) %>%
+  ggplot()+
+  geom_bar(aes(x = ma_reuse, y = ..prop..))+
+  theme_classic()+
+  scale_y_continuous(breaks = seq(0,1, 0.1), limits = c(0,1))+
+  ylab("Proportion")+
+  xlab("Paternity per female")
+
+
+pa_re <- fish_list_reuse %>% 
+  filter(new_sex == "Male") %>% 
+  filter(!grepl(",", year)) %>% 
+  filter(year <= 2017) %>%
+  ggplot()+
+  geom_bar(aes(x = pa_reuse, y = ..prop..))+
+  theme_classic()+
+  scale_y_continuous(breaks = seq(0,1, 0.1), limits = c(0,1))+
+  ylab("Proportion")+
+  xlab("Maternity per male")
+  
+re_plot <- plot_grid(ma_re, pa_re, ncol=2, align = "v")
+re_plot
+ggsave("reuse_plot.png", plot = re_plot, width = 6, height = 4)
+
+fish_list_reuse %>% 
+  filter(new_sex == "Female") %>% 
+  filter(!grepl(",", year)) %>% 
+  filter(year <= 2017) %>%
+  count(ma_reuse) 
+
+ma_reuse_yr %>% 
+  filter(year <= 2017) %>% 
+  count(ma_reuse) 
+
+fish_list_reuse %>% 
+  filter(new_sex == "Male") %>% 
+  filter(!grepl(",", year)) %>% 
+  filter(year <= 2017) %>%
+  count(pa_reuse) %>% 
+  arrange(desc(n))
+```
+
+# doulbe checking the code above
+```{r}
+fish_list_age # this is all my fish with their ages added
+Kid_Pa_Ma_Age_Pair # this is all my fish that were assigned parents with ages added and column for parent pairs in order of pa:ma
+Kid_Pa_Ma_Age_Pair %>% count(pair) %>% arrange(desc(n)) # number of offspring per pair
+Kid_Pa_Ma_Age_Pair %>% count(ma) %>% arrange(desc(n)) # number of offspring per ma
+Kid_Pa_Ma_Age_Pair %>% count(pa) %>% arrange(desc(n)) # number of offspring per pa
+
+Kid_Pa_Ma_Age_Pair %>% count(pair) %>% summarise(mean(n))
+Kid_Pa_Ma_Age_Pair %>% count(ma) %>% summarise(mean(n))
+Kid_Pa_Ma_Age_Pair %>% count(pa) %>% summarise(mean(n))
+
+#number of offspring per male pre 2013
+Kid_Pa_Ma_Age_Pair %>% filter(SpawnYear < 2013) %>% count(pa) %>% arrange(desc(n))
+Kid_Pa_Ma_Age_Pair %>% filter(SpawnYear < 2013) %>% count(pa) %>% summarise(mean(n))
+#number of offspring per male post 2013
+Kid_Pa_Ma_Age_Pair %>% filter(SpawnYear >= 2013) %>% count(pa) %>% arrange(desc(n))
+Kid_Pa_Ma_Age_Pair %>% filter(SpawnYear >= 2013) %>% count(pa) %>% summarise(mean(n))
+
+#number offspirng per pair pre and post 2013
+Kid_Pa_Ma_Age_Pair %>% filter(SpawnYear < 2013) %>% count(pair) %>% summarise(mean(n))
+Kid_Pa_Ma_Age_Pair %>% filter(SpawnYear >= 2013) %>% count(pair) %>% summarise(mean(n))
+
+#next step, look at just uniqune parent pairs
+Kid_Pa_Ma_Age_Pair %>% distinct(pair) # 6,663 unique parent pairs
+new_reuse_data <- Kid_Pa_Ma_Age_Pair %>% 
+  filter(SpawnYear <= 2017) %>% 
+  distinct(pair, .keep_all = T) #6581 unique pairs from 2007-2017
+
+new_reuse_data
+```
+```{r}
+#going to look at midparent age and relative repro success of the pairs
+Kid_Pa_Ma_Age_Pair %>% 
+  mutate(pair_age = paste(pa_age, ma_age, sep = "_")) %>% 
+  count(pair_age, pair) %>% 
+  group_by(pair_age) %>% #count()
+  summarize(mean(n))
+
+beepo <- Kid_Pa_Ma_Age_Pair %>% 
+  mutate(pair_age = paste(pa_age, ma_age, sep = "_")) %>% 
+  mutate(mid_age = case_when(pair_age == "2_2" ~ "2",
+                             pair_age == "2_3" ~ "2.5",
+                             pair_age == "3_2" ~ "2.5",
+                             pair_age == "3_3" ~ "3",
+                             pair_age == "2_4" ~ "3",
+                             pair_age == "4_2" ~ "3",
+                             pair_age == "3_4" ~ "3.5",
+                             pair_age == "4_3" ~ "3.5")) 
+beepo %>%   
+  count(mid_age, pair) %>% 
+  group_by(mid_age) %>% 
+  summarize(mean(n), sd(n))
+
+beepo %>% 
+  filter(!is.na(mid_age)) %>% 
+  count(mid_age, pair) %>% 
+  group_by(mid_age) %>% 
+  ggplot()+
+  geom_boxplot(aes(x = mid_age, y = n))
+```
+
+
+```{r}
+new_reuse_data %>% 
+  group_by(SpawnYear, parent_sg) %>% 
+  count(pa) %>% 
+  arrange(desc(n)) %>% 
+  ggplot()+
+  geom_histogram(aes(x = n), binwidth = 1)+
+  facet_grid(~SpawnYear)
+
+new_reuse_data %>% 
+  group_by(SpawnYear, parent_sg) %>% 
+  count(ma) %>% arrange(desc(n)) %>% 
+  ggplot()+
+  geom_histogram(aes(x = n), binwidth = 1)+
+  facet_grid(~SpawnYear)
+
+new_reuse_data %>% filter(ma == "M046623" ) #iteroparous, so need to remember to group the counts by SpawnYear
+
+#pa reuse
+#2007-2017
+new_reuse_data %>% 
+  group_by(SpawnYear) %>% 
+  count(pa) %>% 
+  rename(mates_per_pa = n) %>% 
+  ungroup() %>% 
+  count(mates_per_pa) %>% 
+  ungroup() %>% 
+  summarize(sum(n))
+
+new_reuse_data %>% 
+  group_by(SpawnYear) %>% 
+  count(pa) %>% 
+  rename(mates_per_pa = n) %>% 
+  ungroup() %>% 
+  count(mates_per_pa) %>% 
+  filter(mates_per_pa > 1) %>% 
+  ungroup() %>% 
+  summarize(sum(n))
+
+963/5352
+
+#2007-2012
+new_reuse_data %>% 
+  filter(SpawnYear <= 2012) %>% 
+  group_by(SpawnYear) %>% 
+  count(pa) %>% 
+  rename(mates_per_pa = n) %>% 
+  ungroup() %>% 
+  count(mates_per_pa) %>% 
+  ungroup() %>% 
+  summarize(sum(n))
+
+new_reuse_data %>% 
+  filter(SpawnYear <= 2012) %>% 
+  group_by(SpawnYear) %>% 
+  count(pa) %>% 
+  rename(mates_per_pa = n) %>% 
+  ungroup() %>% 
+  count(mates_per_pa) %>% 
+  filter(mates_per_pa > 1) %>% 
+  ungroup() %>% 
+  summarize(sum(n))
+
+907/2149
+
+#2013-2017
+new_reuse_data %>% 
+  filter(SpawnYear > 2012) %>% 
+  group_by(SpawnYear) %>% 
+  count(pa) %>% 
+  rename(mates_per_pa = n) %>% 
+  ungroup() %>% 
+  count(mates_per_pa) %>% 
+  ungroup() %>% 
+  summarize(sum(n))
+
+new_reuse_data %>% 
+  filter(SpawnYear > 2012) %>% 
+  group_by(SpawnYear) %>% 
+  count(pa) %>% 
+  rename(mates_per_pa = n) %>% 
+  ungroup() %>% 
+  count(mates_per_pa) %>% 
+  filter(mates_per_pa > 1) %>% 
+  ungroup() %>% 
+  summarize(sum(n))
+
+56/3203
+```
+
+
+```{r}
+#2007-2017 dataset
+# ma
+new_reuse_data %>% 
+  group_by(SpawnYear) %>% 
+  count(ma) %>% 
+  rename(mates_per_ma = n) %>% 
+  ungroup() %>% 
+  count(mates_per_ma) %>% 
+  ungroup() %>% 
+  summarize(sum(n))
+
+new_reuse_data %>% 
+  group_by(SpawnYear) %>% 
+  count(ma) %>% 
+  rename(mates_per_ma = n) %>% 
+  ungroup() %>% 
+  count(mates_per_ma) %>% 
+  filter(mates_per_ma > 3) %>% 
+  ungroup() %>% 
+  summarize(sum(n))
+
+219/3176
+
+#2007-2012
+#ma
+
+new_reuse_data %>% 
+  filter(SpawnYear <= 2012) %>% 
+  group_by(SpawnYear) %>% 
+  count(ma) %>% 
+  rename(mates_per_ma = n) %>% 
+  ungroup() %>% 
+  count(mates_per_ma) %>% 
+  ungroup() %>% 
+  summarize(sum(n))
+
+new_reuse_data %>% 
+  filter(SpawnYear <= 2012) %>% 
+  group_by(SpawnYear) %>% 
+  count(ma) %>% 
+  rename(mates_per_ma = n) %>% 
+  ungroup() %>% 
+  count(mates_per_ma) %>% 
+  filter(mates_per_ma > 3) %>% 
+  ungroup() %>% 
+  summarize(sum(n))
+
+194/1539
+
+#2013-2017
+#ma
+
+new_reuse_data %>% 
+  filter(SpawnYear >= 2013) %>% 
+  group_by(SpawnYear) %>% 
+  count(ma) %>% 
+  rename(mates_per_ma = n) %>% 
+  ungroup() %>% 
+  count(mates_per_ma) %>% 
+  ungroup() %>% 
+  summarize(sum(n))
+
+new_reuse_data %>% 
+  filter(SpawnYear >= 2013) %>% 
+  group_by(SpawnYear) %>% 
+  count(ma) %>% 
+  rename(mates_per_ma = n) %>% 
+  ungroup() %>% 
+  count(mates_per_ma) %>% 
+  filter(mates_per_ma > 3) %>% 
+  ungroup() %>% 
+  summarize(sum(n))
+
+25/1637
+
+
+```
+
+```{r}
+
+new_reuse_data %>% 
+  filter(SpawnYear < 2013) %>% 
+  group_by(SpawnYear) %>% 
+  count(ma) %>% 
+  rename(mates_per_ma = n) %>% 
+  ungroup() %>% 
+  count(mates_per_ma)
+
+new_reuse_data %>% 
+  filter(SpawnYear >= 2013) %>% 
+  group_by(SpawnYear) %>% 
+  count(ma) %>% 
+  rename(mates_per_ma = n) %>% 
+  ungroup() %>% 
+  count(mates_per_ma)
+
+ma_with_dirty_bowl_mates_post_2013 <- new_reuse_data %>% 
+  filter(SpawnYear >= 2013) %>% 
+  group_by(SpawnYear) %>% 
+  count(ma) %>% 
+  filter(n > 3) %>% 
+  ungroup() %>% 
+  select(ma)
+
+
+ma_with_dirty_bowl_mates_post_2013 %>% 
+  count(ma)
+
+full_spawner_meta <- read_rds("/Users/annebeulke/Documents/Russian-River-R/Russian-River/RR_spawner_meta.rds") #from notebook 1
+full_spawner_meta
+
+meta_we_want <- full_spawner_meta %>% select(NMFS_DNA_ID, SAMPLE_ID, SAMPLE_COMMENTS) %>% rename(indiv = NMFS_DNA_ID)
+
+# gamete carry-over
+mas_with_dirty_bowl_issues <- new_reuse_data %>% 
+  right_join(ma_with_dirty_bowl_mates_post_2013, by = "ma") %>% 
+  arrange(ma) %>% 
+  select(kid, ma, pa, parent_sg, ma_hatchery, SpawnYear) %>% 
+  left_join(meta_we_want, by = c("pa" = "indiv")) %>% 
+  rename(pa_sample_id = SAMPLE_ID, pa_sample_comments = SAMPLE_COMMENTS) %>% 
+  left_join(meta_we_want, by = c("ma" = "indiv")) %>% 
+  rename(ma_sample_id = SAMPLE_ID, ma_sample_comments = SAMPLE_COMMENTS) 
+mas_with_dirty_bowl_issues
+
+
+all_more_than3mates <- new_reuse_data %>% 
+  group_by(SpawnYear) %>% 
+  count(ma) %>% 
+  filter(n > 3) %>% 
+  ungroup() %>% 
+  select(ma)
+
+new_reuse_data %>% 
+  right_join(all_more_than3mates, by = "ma") %>% 
+  arrange(ma) %>% 
+  select(kid, ma, pa, parent_sg, ma_hatchery, SpawnYear) %>% 
+  left_join(meta_we_want, by = c("pa" = "indiv")) %>% 
+  rename(pa_sample_id = SAMPLE_ID, pa_sample_comments = SAMPLE_COMMENTS)
+
+all_2013 <- new_reuse_data %>% 
+  filter(SpawnYear >= 2013) %>% 
+  group_by(SpawnYear) %>% 
+  count(ma) %>% 
+  ungroup() %>% 
+  select(ma)
+
+all_dirty_bowl_2013 <- new_reuse_data %>% 
+  right_join(all_2013, by = "ma") %>% 
+  arrange(ma) %>% 
+  select(kid, ma, pa, parent_sg, ma_hatchery, SpawnYear) %>% 
+  mutate(pa = replace(pa, pa == "M065002_Coyote_Valley", "M065002")) %>% 
+  left_join(meta_we_want, by = c("pa" = "indiv")) %>% 
+  rename(pa_sample_id = SAMPLE_ID, pa_sample_comments = SAMPLE_COMMENTS) %>% 
+  left_join(meta_we_want, by = c("ma" = "indiv")) %>% 
+  rename(ma_sample_id = SAMPLE_ID, ma_sample_comments = SAMPLE_COMMENTS) %>% 
+  select(kid, ma, pa, ma_sample_id, pa_sample_id, everything()) %>%
+  filter(SpawnYear >= 2013) %>% 
+  group_by(SpawnYear, ma_hatchery) %>% 
+  mutate(ma_id = str_sub(ma_sample_id, -4,-1)) %>% 
+  mutate(pa_id = str_sub(pa_sample_id, -5,-1)) %>% 
+  mutate(ma_id_2 = str_sub(ma_id, 1,-2)) %>% 
+  mutate(pa_id_2 = str_sub(pa_id, 1,-3)) %>% 
+  mutate(pa_id_n = str_sub(pa_id, -1,-1)) %>% 
+  select(ma_sample_id, ma_id, ma_id_2, pa_sample_id, pa_id, pa_id_2, pa_id_n, everything()) %>% 
+  arrange(ma_sample_id, pa_id_n) %>% 
+  mutate(pa_id_n = replace(pa_id_n, pa_id_n == "B", "b")) %>% 
+  mutate(pa_id_n = replace(pa_id_n, pa_id_n == "C", "c")) %>%
+  ungroup() %>% 
+  group_by(ma) %>% 
+  mutate(sample_id_match = ifelse(ma_id_2 == pa_id_2, yes = "match", no = "different")) 
+all_dirty_bowl_2013
+
+new_reuse_data %>% 
+  filter(ma =="M065558")
+  
+```
+
+```{r}
+# Did the high number of matings happend on the same spawn day? could it be the gamete carry-over?
+new_reuse_data %>% 
+  group_by(SpawnYear) %>%
+  count(ma, parent_sg ) %>% 
+  arrange(desc(n)) %>% 
+  rename(num_mates = n) %>% 
+  arrange(desc(num_mates)) %>% 
+  filter(num_mates > 3)
+  
+new_reuse_data %>% 
+  group_by(SpawnYear) %>% 
+  count(ma, parent_sg ) %>% 
+  rename(num_mates = n) %>% 
+  arrange(ma, desc(num_mates)) %>% 
+  count(ma) %>% 
+  arrange(desc(n)) %>% 
+  rename(num_dates = n) %>% 
+  left_join(new_reuse_data, by = "ma") %>% 
+  filter(num_dates == 2) %>% 
+  count(ma, parent_sg)
+
+# did these multiple paternity instances happen consecutively? 
+
+new_reuse_data %>% 
+  filter(SpawnYear >= 2013) %>% 
+  group_by(SpawnYear) %>% 
+  count(ma) %>% 
+  rename(num_mates = n) %>% 
+  arrange(desc(num_mates)) %>% 
+  select(-SpawnYear) %>% 
+  left_join(new_reuse_data, by  = "ma") %>% 
+  left_join(Kid_Pa_Ma_Age_Pair, by = "pa")
+
+new_reuse_data
+```
+
+
+
+```{r}
+#the moms with 7 male partners are M049044 and M047923
+fish_list_age %>% filter(indiv == "M049044") #spawned once in 2011,3/24/11 WS, 3 years old
+Kid_Pa_Ma_Age_Pair %>% filter(ma == "M049044") #13 offspring, 12 were 3 yr old, 1 was a 4 yr old
+Kid_Pa_Ma_Age_Pair %>% filter(ma == "M049044") %>% count(pair)
+#mated with M048718, M049073, M049071, M049072, M049082, M049062, M049058	all on 3/24/2011
+
+fish_list_age %>% filter(indiv == "M047923") #spawned once in 2011,3/24/11 CV, unknown age
+Kid_Pa_Ma_Age_Pair %>% filter(ma == "M047923") #14 offspring, 2 were 2 yr, 10 were 3 yr old, 1 was a 4 yr
+Kid_Pa_Ma_Age_Pair %>% filter(ma == "M047923") %>% count(pair)
+#mated wtih M047873, M047875,M047877, M047889, M047890, M047892, M047894 all on 3/24/11
+fish_list_age %>% filter(indiv == "M047894")
+```
+```{r}
+fish_list_age %>% filter(hatchery == "Coyote_Valley,Warm_Springs")
+```
+
+```{r}
+CohortAge_All <- ggplot(data = Ped_length_age)+
+  geom_bar(aes(x = kid_age, y=..prop.., fill= as.character(SpawnYear)))+
+  ggtitle("Age of Return by Cohort")+
+  xlab("Age at Return")+
+  labs(fill= "Cohort Year")+
+  facet_wrap(~as.character(SpawnYear))+
+  theme_classic()
+
+#remove 5 year old
+CohortAge_remove5 <- ggplot(data = Ped_length_age_rm5yr)+
+  geom_bar(aes(x = kid_age, y=..prop.., fill= as.character(SpawnYear)))+
+  ggtitle("Age of Return by Cohort")+
+  xlab("Age at Return")+
+  labs(fill= "Cohort Year")+
+  facet_wrap(~as.character(SpawnYear))+
+  theme_classic()
+
+#seperate by sex as well, removed the NA sexes
+CohortAge_remove5_sex <- ggplot(data = subset(Ped_length_age_rm5yr, !is.na(new_kid_sex)))+
+  geom_bar(aes(x = kid_age, y=..prop.., fill= new_kid_sex), position = "dodge")+
+  ggtitle("Age of Return by Cohort and Sex")+
+  xlab("Age at Return")+
+  labs(fill= "Sex")+
+  facet_wrap(~as.character(SpawnYear))+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+
+
+Age.dist.5remove <- ggplot(data = Ped_length_age_rm5yr)+
+  geom_bar(aes(x = kid_age, y = ..prop..), position = "dodge")+
+  ggtitle("Age Distribuiton")+
+  xlab("Age")+
+  scale_y_continuous(breaks=seq(0,1.0,0.1), limits = c(0:1.0))+
+  theme_classic()
+
+Age.dist.5remove.sex <- ggplot(data = subset(Ped_length_age_rm5yr, !is.na(new_kid_sex)))+
+  geom_bar(aes(x = kid_age, y = ..prop.., fill = new_kid_sex), position = "dodge")+
+  #ggtitle("Age Distribution")+
+  xlab("Age")+
+  scale_y_continuous(breaks=seq(0,1.0,0.1), limits = c(0:1.0))+
+  theme_classic()+
+  facet_wrap(~new_kid_sex)+
+  scale_fill_manual(values = c("#503143","#79ad9f" ))+
+  labs(fill= "Sex")+
+  theme(legend.position = "none")
+
+
+
+age_fill <- Ped_length_age_rm5yr %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  group_by(new_kid_sex) %>% 
+  count(kid_age) %>% 
+  mutate(percent = (n/sum(n))*100) %>% 
+  ggplot()+
+  geom_col(aes(x = new_kid_sex, y = percent, fill = as.character(kid_age)), position = "fill")+
+  xlab("Sex")+
+  theme_classic()+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b", "#c49b60" ))+
+  labs(fill= "Age", y = "Proportion")
+age_fill
+
+age_yr_fill <- Ped_length_age_rm5yr %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  group_by(new_kid_sex, SpawnYear) %>% 
+  count(kid_age) %>% 
+  mutate(percent = (n/sum(n))*100) %>% 
+  mutate(sum_n = sum(n)) %>% 
+  ggplot()+
+  geom_col(aes(x = new_kid_sex, y = percent, fill = as.character(kid_age)), position = "fill")+
+  xlab("")+
+  theme_classic()+
+  facet_wrap(~as.character(SpawnYear))+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b", "#c49b60" ))+
+  labs(fill= "Age", y = "Proportion")
+age_yr_fill
+
+
+Ped_length_age_rm5yr %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  count(new_kid_sex,kid_age)
+
+CohortAge_All
+CohortAge_remove5
+CohortAge_remove5_sex
+Age.dist.5remove 
+Age.dist.5remove.sex
+
+```
+
+```{r}
+age_count <- ggplot(data = subset(Ped_length_age_rm5yr, !is.na(new_kid_sex)))+
+  geom_bar(aes(x = kid_age, y = ..prop.., fill = new_kid_sex), position = "dodge")+
+  #ggtitle("Age Distribution")+
+  xlab("Age")+
+  scale_y_continuous(breaks=seq(0,1.0,0.1), limits = c(0:1.0))+
+  theme_classic()+
+  facet_wrap(~new_kid_sex)+
+  scale_fill_manual(values = c("#503143","#79ad9f" ))+
+  labs(fill= "Sex", y = "Proportion" )+
+  theme(legend.position = "none")+
+  geom_text(aes( x = kid_age, label = ..count.., y = ..prop..), stat = "count", position = position_fill(vjust = -0.05), size = 3)+
+  scale_y_continuous()
+age_count
+```
+
+KW of age structure between sexes
+```{r}
+Ped_length_age_rm5yr %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  kruskal.test(data = ., kid_age ~ new_kid_sex)
+```
+
+
+```{r}
+#age matrix -- trios with kid, ma and pa ages
+AgeMatrix <- Ped_length_age %>% 
+  mutate(mid_age = (pa_age + ma_age)/2) %>% 
+  mutate(age_pair = paste(pa_age, ma_age, sep = "_")) %>% 
+  filter(!is.na(mid_age))
+write_csv(AgeMatrix, "RR_2007-2020_age_matrix.csv")
+
+AgeMatrix #7,573 trios with kid, ma and pa ages
+AgeMatrix %>% count(SpawnYear)
+
+#Length matrix -- trios with kid, ma and pa lengths
+LenMatrix <- Ped_length_age %>% 
+  mutate(mid_length = (pa_length + ma_length)/2) %>% 
+  mutate(length_pair = paste(pa_length, ma_length, sep = "_")) %>% 
+  filter(!is.na(mid_length))
+LenMatrix #6,666 trios with kid, ma, pa lengths
+LenMatrix %>% count(SpawnYear)
+
+#Length and age matrix
+#trios with length for ma, pa and kid and age for ma, pa, kid
+AgeMatrixLen <- Ped_length_age %>% 
+  mutate(mid_age = (pa_age + ma_age)/2) %>% 
+  mutate(age_pair = paste(pa_age, ma_age, sep = "_")) %>% 
+  mutate(mid_length = (pa_length + ma_length)/2) %>% 
+  mutate(length_pair = paste(pa_length, ma_length, sep = "_")) %>% 
+  filter(!is.na(mid_age), !is.na(mid_length)) 
+AgeMatrixLen #5,619 trios with length and age for kid, ma and pa 
+AgeMatrixLen %>% count(SpawnYear)
+write_csv(AgeMatrixLen, "RR_age_length_matrix_2007-2020.csv")
+```
+
+```{r}
+LenMatrix %>% 
+  mutate(len_dif = ma_length - pa_length) %>% 
+  ggplot()+
+  geom_histogram(aes(x = len_dif, y = ..density..), binwidth = 25)
+
+LenMatrix %>% 
+  mutate(len_dif = ma_length - pa_length) %>% 
+  ggplot()+
+  geom_histogram(aes(x = len_dif), binwidth = 25)
+
+LenMatrix %>% 
+  filter(kid_age < 5) %>% 
+  mutate(len_dif = ma_length - pa_length) %>% 
+  ggplot()+
+  geom_histogram(aes(x = len_dif, y = ..density..), binwidth = 25)+
+  facet_wrap(~kid_age)
+
+
+p <- LenMatrix %>% 
+  filter(kid_age < 5) %>% 
+  mutate(len_dif = ma_length - pa_length) %>% 
+  mutate(ppair = paste(pa, ma, sep = "_")) %>% 
+  group_by(ppair) %>% 
+  count() %>% 
+  arrange(desc(n))
+
+LenMatrix %>% 
+  filter(kid_age < 5) %>% 
+  mutate(len_dif = ma_length - pa_length) %>% 
+  mutate(ppair = paste(pa, ma, sep = "_")) %>% 
+  group_by(ppair) %>% 
+  full_join(p, by = "ppair") %>% 
+  ggplot()+
+  geom_count( aes(x = len_dif, y = n))
+
+LenMatrix %>% 
+  filter(kid_age < 5) %>% 
+  mutate(len_dif = ma_length - pa_length) %>% 
+  ggplot()+
+  geom_count( aes(x = len_dif, y = kid_length))
+
+#lm(y~x)
+LenMatrix %>% 
+  filter(kid_age < 5) %>% 
+  mutate(len_dif = ma_length - pa_length) %>% 
+  lm(kid_length~len_dif, .) %>% 
+  summary()
+```
+
+
+```{r}
+Mas <- ggplot(data = AgeMatrix)+
+  geom_histogram(aes(x = ma_age, y  = ..density..), binwidth = 1)+
+  ggtitle("Ma Age Distribution")
+
+Mas
+w <- ggplot_build(Mas)
+w$data[[1]]
+
+
+Pas <- ggplot(data = AgeMatrix)+
+  geom_histogram(aes(x = pa_age, y  = ..density..), binwidth = 1)+
+  ggtitle("Pa Age Distribution")
+Pas
+e <- ggplot_build(Pas)
+e$data[[1]]
+
+Offs <- ggplot(data = AgeMatrix)+
+  geom_histogram(aes(x = kid_age, y  = ..density..), binwidth = 1)+
+  ggtitle("Kid Age Distribution")
+Offs
+r <- ggplot_build(Offs)
+r$data[[1]]
+
+FOffs <- AgeMatrix %>% filter(new_kid_sex == "Female")
+FO <- ggplot(data = FOffs)+
+  geom_histogram(aes(x = kid_age, y = ..density..), binwidth = 1)+
+  ggtitle("Female Kid Age Distribution")+
+  facet_wrap(~new_kid_sex)
+FO
+t <- ggplot_build(FO)
+t$data[[1]]
+
+MOffs <- AgeMatrix %>% filter(new_kid_sex == "Male")
+MO <- ggplot(data = MOffs)+
+  geom_histogram(aes(x = kid_age, y = ..density..), binwidth = 1)+
+  ggtitle("Male Kid Age Distribution")+
+  facet_wrap(~new_kid_sex)
+MO
+y <- ggplot_build(MO)
+y$data[[1]]
+
+RelFreqAge2 <- ggplot()+
+  geom_point(data = w$data[[1]], aes(x = x, y = y, color= "Ma"), color = "red")+
+  geom_point(data = t$data[[1]], aes(x = x, y = y, color = "F Kid"), color = "pink", shape = 25, size = 5, stroke = 1.2)+
+  geom_point(data = y$data[[1]], aes(x = x, y = y, color = "M Kid"), color = "light blue", shape = 25, size = 5, stroke = 1.2)+
+  geom_point(data = e$data[[1]], aes(x = x, y =y, color = "Pa"), color= "blue")+
+  labs(title = "relative frequencites of ages", subtitle = "Used Age Matrix where Kid, Pa, and Ma ages are all known", caption = "Red dots, Ma; Blue dots, Pa; Pink triangle, F Kid; Light Blue triangle, M Kid")+
+  ylab("Frequency")+
+  xlab("Age")
+RelFreqAge2
+
+MidAge <- ggplot(data = AgeMatrix)+
+  geom_bar(aes(x = mid_age, y = ..prop..))+
+  theme_classic()
+MidAge
+
+AgeMatrix %>% select(SpawnYear, mid_age) %>% 
+  ggplot()+
+  geom_bar(aes(x = mid_age, y = ..prop..), width = 0.5)+
+  theme_classic()+
+  facet_wrap(~as.character(SpawnYear))
+```
+mid_age
+```{r}
+AgeMatrix %>% count(mid_age, age_pair)
+AgeMatrix %>% count(SpawnYear, mid_age)
+```
+```{r}
+Ped_length_age 
+mean(Ped_length_age$kid_length, na.rm = T)
+sd(Ped_length_age$kid_length, na.rm = T)
+
+Ped_length_age %>% 
+  group_by(kid_age, new_kid_sex) %>% 
+  summarize(mean(kid_length, na.rm = T), sd(kid_length, na.rm = T))
+
+Ped_length_age %>% 
+  group_by(new_kid_sex) %>% 
+  summarize(mean(kid_length, na.rm = T), sd(kid_length, na.rm = T))
+
+Ped_length_age %>% 
+  group_by(kid_age) %>% 
+  summarize(mean(kid_length, na.rm = T), sd(kid_length, na.rm = T))
+```
+
+```{r}
+#length and age graphs from the matrix data
+ggplot(data = AgeMatrixLen)+
+  geom_count(aes(y = kid_age, x = kid_length))
+
+ggplot(data = LenMatrix)+
+  geom_count(aes(x=mid_length, y = kid_length))+
+  geom_smooth(method = "lm", aes(x = mid_length, y = kid_length), color="#1B9E77")+
+  theme_classic()
+#lm(y~x)
+lm(kid_length ~ mid_length, LenMatrix) %>% summary()
+
+AgeMatrixLen %>% 
+  filter(mid_age == kid_age) %>% count(age_pair)
+
+AgeMatrixLen %>% 
+  filter(mid_age == kid_age) %>% 
+  filter(age_pair != "2_4") %>% count(age_pair)
+
+#want kid and mid parent age to be the same, and we want mid parents that are formed by same aged parents
+
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(mid_age == kid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  lm(kid_length ~ mid_length ,.) %>% summary()
+
+LenAge <- AgeMatrixLen %>% 
+  filter(mid_age == kid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  ggplot(.)+
+  geom_count(aes(x = mid_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = mid_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Mid Parent Length", y = "Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 900, 50))+
+  scale_x_continuous(breaks= seq(400,900, 50))
+
+LenAge
+
+```
+
+Length heritability
+```{r}
+#ma length by kid length, plus age
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  ggplot(.)+
+  geom_count(aes(x = ma_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = ma_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Ma Length", y = "Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))#+
+  #ggtitle("offspring age = ma age")
+
+#lm(y ~x)
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  lm(kid_length ~ ma_length, .) %>% 
+  summary()
+```
+
+```{r}
+#ma length by female offspring length, plus age
+f_len <- AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  filter(new_ma_sex == "Female", new_kid_sex == "Female") %>% 
+  ggplot(.)+
+  geom_count(aes(x = ma_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = ma_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Ma Length", y = "Female Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("Female offspring, age = ma age")
+f_len
+
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  filter(new_ma_sex == "Female", new_kid_sex == "Female") %>% 
+  lm(kid_length ~ ma_length, .) %>% 
+  summary()
+```
+
+
+```{r}
+#Pa length by kid length, plus age
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  ggplot(.)+
+  geom_count(aes(x = pa_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = pa_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Pa Length", y = "Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("offspring age = pa age")
+
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  lm(kid_length ~ pa_length, .) %>% 
+  summary()
+```
+
+```{r}
+
+#pa length by male offspring length, plus age
+m_len <- AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  filter(new_pa_sex == "Male", new_kid_sex == "Male") %>% 
+  ggplot(.)+
+  geom_count(aes(x = pa_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = pa_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Pa Length", y = "Male Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("Male offspring, age = pa age")
+m_len
+
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  filter(new_pa_sex == "Male", new_kid_sex == "Male") %>% 
+  lm(kid_length ~ pa_length, .) %>% 
+  summary()
+```
+
+
+```{r}
+AgeMatrixLen %>% 
+  filter(mid_age == kid_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  ggplot(.)+
+  geom_count(aes(x = mid_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = mid_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Mid Length", y = "Male Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("male offspring age = mid age")
+
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(mid_age == kid_age) %>% 
+  filter(new_kid_sex == "Male") %>%
+   lm(kid_length ~ mid_length, .) %>% 
+  summary()
+```
+
+```{r}
+AgeMatrixLen %>% 
+  filter(mid_age == kid_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  ggplot(.)+
+  geom_count(aes(x = mid_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = mid_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Mid Length", y = "Female Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("female offspring age = mid age")
+
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(mid_age == kid_age) %>% 
+  filter(new_kid_sex == "Female") %>%
+   lm(kid_length ~ mid_length, .) %>% 
+  summary()
+```
+
+```{r}
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  filter(new_pa_sex == "Male", new_kid_sex == "Female") %>% 
+  ggplot(.)+
+  geom_count(aes(x = pa_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = pa_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Pa Length", y = "Female Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("Female offspring, age = pa age")
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  filter(new_pa_sex == "Male", new_kid_sex == "Female") %>% 
+   lm(kid_length ~ pa_length, .) %>% 
+  summary()
+```
+
+```{r}
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  filter(new_ma_sex == "Female", new_kid_sex == "Male") %>% 
+  ggplot(.)+
+  geom_count(aes(x = ma_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = ma_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Ma Length", y = "Male Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("Male offspring, age = ma age")
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  filter(new_ma_sex == "Female", new_kid_sex == "Male") %>% 
+  lm(kid_length ~ ma_length, .) %>% 
+  summary()
+```
+
+```{r}
+AgeMatrixLen %>% 
+  filter(mid_age == kid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  filter(mid_age  == 3) %>% 
+  ggplot(.)+
+  geom_count(aes(x = mid_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = mid_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Mid Parent Length", y = "Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 900, 50))+
+  scale_x_continuous(breaks= seq(400,900, 50))+
+  ggtitle("Length, offspring and mid-parent age = 3")
+
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(mid_age == kid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  filter(mid_age  == 3) %>% 
+  lm(kid_length ~ mid_length, .) %>% 
+  summary()
+```
+
+
+```{r}
+AgeMatrixLen %>% 
+  filter(mid_age == kid_age) %>% 
+  filter(mid_age  == 2) %>% 
+  ggplot(.)+
+  geom_count(aes(x = mid_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = mid_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Mid Parent Length", y = "Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 900, 50))+
+  scale_x_continuous(breaks= seq(400,900, 50))+
+  ggtitle("Length, offspring and mid-parent age = 2")
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(mid_age == kid_age) %>% 
+  filter(mid_age  == 2) %>% 
+   lm(kid_length ~ mid_length, .) %>% 
+  summary()
+```
+
+```{r}
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  filter(pa_age == 3) %>% 
+  filter(new_pa_sex == "Male", new_kid_sex == "Male") %>% 
+  ggplot(.)+
+  geom_count(aes(x = pa_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = pa_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Pa Length", y = "Male Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("Males only, age 3")
+  
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  filter(pa_age == 3) %>% 
+  filter(new_pa_sex == "Male", new_kid_sex == "Male") %>% 
+  lm(kid_length ~ pa_length, .) %>% 
+  summary()
+```
+
+```{r}
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  filter(pa_age == 2) %>% 
+  filter(new_pa_sex == "Male", new_kid_sex == "Male") %>% 
+  ggplot(.)+
+  geom_count(aes(x = pa_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = pa_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Pa Length", y = "Male Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("Males only, age 2")
+  
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  filter(pa_age == 2) %>% 
+  filter(new_pa_sex == "Male", new_kid_sex == "Male") %>% 
+  lm(kid_length ~ pa_length, .) %>% 
+  summary()
+```
+
+```{r}
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  filter(pa_age == 2) %>% 
+  filter(new_pa_sex == "Male", new_kid_sex == "Female") %>% 
+  ggplot(.)+
+  geom_count(aes(x = pa_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = pa_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Pa Length", y = "Female Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("pa and female offspring, age 2")
+  
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  filter(pa_age == 2) %>% 
+  filter(new_pa_sex == "Male", new_kid_sex == "Female") %>% 
+  lm(kid_length ~ pa_length, .) %>% 
+  summary()
+```
+
+```{r}
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  filter(pa_age == 3) %>% 
+  filter(new_pa_sex == "Male", new_kid_sex == "Female") %>% 
+  ggplot(.)+
+  geom_count(aes(x = pa_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = pa_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "Pa Length", y = "Female Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("pa and female offspring, age 3")
+  
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(pa_age == kid_age) %>% 
+  filter(pa_age == 3) %>% 
+  filter(new_pa_sex == "Male", new_kid_sex == "Female") %>% 
+  lm(kid_length ~ pa_length, .) %>% 
+  summary()
+```
+
+```{r}
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  filter(ma_age == 3) %>% 
+  filter(new_ma_sex == "Female", new_kid_sex == "Female") %>% 
+  ggplot(.)+
+  geom_count(aes(x = ma_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = ma_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "ma Length", y = "Female Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("females only, age 3")
+  
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  filter(ma_age == 3) %>% 
+  filter(new_ma_sex == "Female", new_kid_sex == "Female") %>%
+  lm(kid_length ~ ma_length, .) %>% 
+  summary()
+```
+
+```{r}
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  filter(ma_age == 2) %>% 
+  filter(new_ma_sex == "Female", new_kid_sex == "Female") %>% 
+  ggplot(.)+
+  geom_count(aes(x = ma_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = ma_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "ma Length", y = "Female Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("females only, age 2")
+  
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  filter(ma_age == 2) %>% 
+  filter(new_ma_sex == "Female", new_kid_sex == "Female") %>%
+  lm(kid_length ~ ma_length, .) %>% 
+  summary()
+```
+
+
+```{r}
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  filter(ma_age == 2) %>% 
+  filter(new_ma_sex == "Female", new_kid_sex == "Male") %>% 
+  ggplot(.)+
+  geom_count(aes(x = ma_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = ma_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "ma Length", y = "Male Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("ma and male offspring, age 2")
+  
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  filter(ma_age == 2) %>% 
+  filter(new_ma_sex == "Female", new_kid_sex == "Male") %>%
+  lm(kid_length ~ ma_length, .) %>% 
+  summary()
+```
+
+```{r}
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  filter(ma_age == 3) %>% 
+  filter(new_ma_sex == "Female", new_kid_sex == "Male") %>% 
+  ggplot(.)+
+  geom_count(aes(x = ma_length, y = kid_length, color = as.character(kid_age)))+
+  geom_smooth(method = "lm", aes(x = ma_length, y = kid_length), color="#1B9E77")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")+
+  labs(color = "Age", x = "ma Length", y = "Male Offspring Length")+
+  scale_y_continuous(breaks= seq(400, 1000, 50))+
+  scale_x_continuous(breaks= seq(400,1000, 50))+
+  ggtitle("ma and male offspring, age 3")
+  
+#lm(y~x)
+AgeMatrixLen %>% 
+  filter(ma_age == kid_age) %>% 
+  filter(ma_age == 3) %>% 
+  filter(new_ma_sex == "Female", new_kid_sex == "Male") %>%
+  lm(kid_length ~ ma_length, .) %>% 
+  summary()
+```
+
+```{r}
+#spawn day heritability by age
+
+ggplot(data = AgeMatrix)+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("Parent Spawn Date by Kid Spawn Date")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Kid Age")
+
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("Parent Spawn Date by Kid Spawn Date")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Kid Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y ~ X)
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+  
+spawn_age <- AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  #ggtitle("kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Offspring Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#193439")+
+  theme_classic()+
+  scale_color_manual(values = c("#503143", "#79ad9f", "#9a532b"))+
+  coord_fixed(ratio = 1, xlim = c(0, 115), ylim = c(1, 115), expand = F)+
+  scale_x_continuous(breaks = seq(0, 115, 5))+
+  scale_y_continuous(breaks = seq(0, 115, 5))+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
+spawn_age
+
+
+
+#lm formula lm(y~x)
+
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+
+```
+```{r}
+#open circles
+open <- AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)), shape = 1)+
+  #ggtitle("kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Offspring Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#193439")+
+  theme_classic()+
+  scale_color_manual(values = c("#503143", "#79ad9f", "#9a532b"))+
+  coord_fixed(ratio = 1, xlim = c(0, 115), ylim = c(1, 115), expand = F)+
+  scale_x_continuous(breaks = seq(0, 115, 5))+
+  scale_y_continuous(breaks = seq(0, 115, 5))+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
+open
+
+```
+
+```{r}
+#jittered circles
+jitter <- AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)), position = position_jitter(1.5, 1.5))+
+  #ggtitle("kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Offspring Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#193439")+
+  theme_classic()+
+  scale_color_manual(values = c("#503143", "#79ad9f", "#9a532b"))+
+  coord_fixed(ratio = 1, xlim = c(0, 115), ylim = c(1, 115), expand = F)+
+  scale_x_continuous(breaks = seq(0, 115, 5))+
+  scale_y_continuous(breaks = seq(0, 115, 5))+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
+jitter
+```
+
+```{r}
+#open and closed circles
+open_closed <- AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age), shape = as.character(kid_age)))+
+  #ggtitle("kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Offspring Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#193439")+
+  theme_classic()+
+  scale_color_manual(name = "Age", values = c("#503143", "#79ad9f", "#9a532b"))+
+  scale_shape_manual(name = "Age", values = c(16, 1, 1))+
+  coord_fixed(ratio = 1, xlim = c(0, 115), ylim = c(1, 115), expand = F)+
+  scale_x_continuous(breaks = seq(0, 115, 5))+
+  scale_y_continuous(breaks = seq(0, 115, 5))+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
+open_closed
+```
+
+#going to try and get age 2 data placed on top of the age 3 data
+```{r}
+df <- AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  group_by(kid_age) %>% 
+  arrange(desc(kid_age)) %>% 
+  mutate(kid_age_f = factor(kid_age, levels = c("3","2")))
+
+factor_plot <- ggplot(df)+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = (kid_age_f)))+
+  #ggtitle("kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Offspring Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#193439")+
+  theme_classic()+
+  scale_color_manual(values = c( "#503143", "#79ad9f","#9a532b"), breaks = c("2", "3"))+
+  coord_fixed(ratio = 1, xlim = c(0, 115), ylim = c(1, 115), expand = F)+
+  scale_x_continuous(breaks = seq(0, 115, 5))+
+  scale_y_continuous(breaks = seq(0, 115, 5))+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5))+
+  guides(color = guide_legend(order=1))
+
+factor_plot
+
+
+ggplot(df)+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = (kid_age_f)))+
+  #ggtitle("kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Offspring Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  theme_classic()+
+  scale_color_manual(values = c( "#503143", "#79ad9f","#9a532b"), breaks = c("2", "3"))+
+  coord_fixed(ratio = 1, xlim = c(0, 115), ylim = c(1, 115), expand = F)+
+  scale_x_continuous(breaks = seq(0, 115, 5))+
+  scale_y_continuous(breaks = seq(0, 115, 5))+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5))+
+  guides(color = guide_legend(order=1))
+```
+
+
+```{r}
+#all offspirng, kid age = pa age
+pa_kid <- AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_pa_sex == "Male") %>% 
+  mutate(kid_age_f = factor(kid_age, levels = c("3","2","4"))) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = kid_age_f))+
+  #ggtitle("kid_age = pa_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Offspring Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#193439")+
+  theme_classic()+
+  scale_color_manual(values = c("#503143", "#79ad9f", "#9a532b"), breaks = c("2", "3","4"))+
+  guides(color = guide_legend(order=1))
+pa_kid
+
+
+#lm formula lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_pa_sex == "Male") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+```
+
+
+```{r}
+#all offspring, kid age = ma age
+ma_kid <- AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_ma_sex == "Female") %>% 
+  mutate(kid_age_f = factor(kid_age, levels = c("3","2","4"))) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = kid_age_f))+
+  #ggtitle("kid_age = ma_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#193439")+
+  theme_classic()+
+  scale_color_manual(values = c("#503143", "#79ad9f", "#9a532b"), breaks = c("2", "3","4"))
+ma_kid
+
+#lm formula lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_ma_sex == "Female") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+
+```
+
+
+
+```{r}
+#next, look at it by sexes
+spawn_age_f <- AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  filter(new_kid_sex == "Female") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("females, kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+spawn_age_f
+
+#lm(y ~ x)
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  filter(new_kid_sex == "Female") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+
+#female and mother only
+ AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("females, kid_age = ma_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+ 
+ #lm(y~x)
+ AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+```
+looking at females only by ages:
+mid parent age matching female offspring age
+```{r}
+#mid age
+#2yr olds
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(kid_age == 2) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("females, kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+
+#lm(y ~ x)
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(kid_age == 2) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+
+#3yr olds
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair == "3_3") %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(kid_age == 3) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("females, kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y ~ x)
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair == "3_3") %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(kid_age == 3) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+```
+looking at females only by ages:
+mother age matching female offspring age
+```{r}
+#female and mother only
+#2yr olds
+ AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  filter(kid_age == 2) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("females, kid_age = ma_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+ 
+ #lm(y~x)
+ AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_ma_sex == "Female") %>% 
+   filter(kid_age == 2) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+
+ #3yr olds
+ AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  filter(kid_age == 3) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("females, kid_age = ma_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+ 
+ #lm(y~x)
+ AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_ma_sex == "Female") %>% 
+   filter(kid_age == 3) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+
+ # matches ages
+ AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("females, kid_age = ma_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+ 
+ #lm(y~x)
+ AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+
+```
+
+
+
+```{r}
+#males and mid
+spawn_age_m <- AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  filter(new_kid_sex == "Male") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("males, kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+spawn_age_m
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  filter(new_kid_sex == "Male") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+
+#males and fathers
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("males, kid_age = pa_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+```
+males only, by ages:
+male offspring age matches mid parent age
+```{r}
+#males and mid
+#2yr olds
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(kid_age == 2) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("males, kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(kid_age == 2) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+
+#3yr olds
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair == "3_3") %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(kid_age == 3) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("males, kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair == "3_3") %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(kid_age == 3) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear), .) %>% 
+  summary()
+
+
+
+```
+looking at differentes in offspring and parent spawn date distributions
+```{r}
+# male offspring distribution and mean
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(kid_age == 3) %>% 
+  ggplot()+
+  geom_bar(aes(x = as.numeric(kid_dayofyear), y = ..count.., color = as.character(kid_age)))+
+  ggtitle("males, kid_age = 3")+
+  xlab("kid Spawn Date (Day of Year)")+
+  ylab("count")+
+  labs(color = "Age")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(kid_age == 3) %>% 
+  summarize(mean(as.numeric(kid_dayofyear)), median(as.numeric(kid_dayofyear)))
+
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(kid_age == 3) %>% 
+  ggplot()+
+  geom_bar(aes(x = as.numeric(parent_dayofyear), y = ..count.., color = as.character(kid_age)))+
+  ggtitle("male parent, kid_age = 3")+
+  xlab("parent Spawn Date (Day of Year)")+
+  ylab("count")+
+  labs(color = "Age")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(kid_age == 3) %>% 
+  summarize(mean(as.numeric(parent_dayofyear), na.rm = T), median(as.numeric(parent_dayofyear), na.rm = T))
+```
+females distribution and mean
+```{r}
+# female offspring distribution and mean
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(kid_age == 3) %>% 
+  ggplot()+
+  geom_bar(aes(x = as.numeric(kid_dayofyear), y = ..count.., color = as.character(kid_age)))+
+  ggtitle("females, kid_age = 3")+
+  xlab("kid Spawn Date (Day of Year)")+
+  ylab("count")+
+  labs(color = "Age")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(kid_age == 3) %>% 
+  summarize(mean(as.numeric(kid_dayofyear)), median(as.numeric(kid_dayofyear)))
+
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(kid_age == 3) %>% 
+  ggplot()+
+  geom_bar(aes(x = as.numeric(parent_dayofyear), y = ..count.., color = as.character(kid_age)))+
+  ggtitle("female parent, kid_age = 3")+
+  xlab("parent Spawn Date (Day of Year)")+
+  ylab("count")+
+  labs(color = "Age")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(kid_age == 3) %>% 
+  summarize(mean(as.numeric(parent_dayofyear), na.rm = T), median(as.numeric(parent_dayofyear), na.rm = T))
+
+```
+
+
+male only
+male offspring age matches pa age
+```{r}
+#males and fathers
+#2yr
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  filter(kid_age == 2) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("males, kid_age = pa_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  filter(kid_age == 2) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+#3yr
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  filter(kid_age == 3) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("males, kid_age = pa_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  filter(kid_age == 3) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+#matched ages
+
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("males, kid_age = pa_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+```
+sons and mothers
+```{r}
+#2yr
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  filter(kid_age == 2) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("sons and mothers, kid_age = ma_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  filter(kid_age == 2) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+#3yr
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  filter(kid_age == 3) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("sons and mothers, kid_age = ma_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  filter(kid_age == 3) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+#matched ages
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("sons and mothers, kid_age = ma_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+```
+
+daughter and fathers 
+```{r}
+#2yr
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  filter(kid_age == 2) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("daughers and fathers, kid_age = pa_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  filter(kid_age == 2) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+#3yr
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  filter(kid_age == 3) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("daughers and fathers, kid_age = pa_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  filter(kid_age == 3) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+# matched ages
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("daughers and fathers, kid_age = pa_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+```
+
+
+what about all offspring together, seperated by age groups
+```{r}
+#2yr olds
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(kid_age == 2) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("all offspring, kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(kid_age == 2) %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+
+#3yr olds
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(kid_age == 3) %>% 
+  filter(age_pair == "3_3") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("all offspring, kid_age = mid_age")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+#lm(y~x)
+AgeMatrix %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(kid_age == 3) %>% 
+  filter(age_pair == "3_3") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+```
+
+take a look at spawn dates when the parent age = 3 and the offspring age == 2
+```{r}
+#all offspring, mid parent age
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(mid_age == 3) %>% 
+  filter(age_pair == "3_3") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("all offspring, kid_age = 2, mid_age = 3")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(mid_age == 3) %>% 
+  filter(age_pair == "3_3") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+#males, mid parent age
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(mid_age == 3) %>% 
+  filter(age_pair == "3_3") %>% 
+  filter(new_kid_sex == "Male") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("males, kid_age = 2, mid_age = 3")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(mid_age == 3) %>% 
+  filter(age_pair == "3_3") %>% 
+  filter(new_kid_sex == "Male") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+#females, mid parent age
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(mid_age == 3) %>% 
+  filter(age_pair == "3_3") %>% 
+  filter(new_kid_sex == "Female") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("females, kid_age = 2, mid_age = 3")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(mid_age == 3) %>% 
+  filter(age_pair == "3_3") %>% 
+  filter(new_kid_sex == "Female") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+```
+
+
+```{r}
+#males and fathers
+# offspring = 2, pa = 3
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(pa_age == 3) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("males, kid_age = 2, pa_age = 3")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(pa_age == 3) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+#2 yr male and 3 yr ma
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(ma_age == 3) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("males, kid_age = 2, ma_age = 3")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(ma_age == 3) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+```
+
+```{r}
+#females and mothers
+# offspring = 2, pa = 3
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(ma_age == 3) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("females, kid_age = 2, ma_age = 3")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(ma_age == 3) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+#2 yr female and 3 yr pa
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(pa_age == 3) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear), color = as.character(kid_age)))+
+  ggtitle("females, kid_age = 2, pa_age = 3")+
+  xlab("Parent Spawn Date (Day of Year)")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = as.numeric(parent_dayofyear), y = as.numeric(kid_dayofyear)), color="#7570B3")+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+
+AgeMatrix %>% 
+  filter(kid_age == 2) %>% 
+  filter(pa_age == 3) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+```
+# baysian linear regressions of spawn dates for parents and offspring to get at estimate of the genetic correlation between sexes with posterior distribution
+
+to get the cross-sex genetic correlation, I need...
+
+slope of regression for mothers + daughters
+                        mothers + sons
+                        fathers + daughters
+                        fathers + sons
+ 
+# mothers and daughters                        
+```{r, eval = FALSE}
+library(rstanarm)
+#bayesian linear regressions
+#moher, daughter
+# https://www.r-bloggers.com/2021/09/bayesian-regression-analysis-with-rstanarm/
+# https://m-clark.github.io/easy-bayes/rstanarm-glm.html
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+md <- AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  stan_glm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , ., family = gaussian) 
+
+md %>% summary
+md_sims <- as.matrix(md)
+head(md_sims)
+
+
+bayesplot::mcmc_areas(md_sims, prob = 0.9)
+
+bayesplot::mcmc_areas(md_sims,
+          pars = c("as.numeric(parent_dayofyear)"),
+          prob = 0.9) +
+  ggtitle("mothers and daugthers")
+
+md_sims %>% 
+  summary(mean('as.numeric(parent_dayofyear))'))
+
+
+```
+# now lets try mothers and sons
+```{r, eval = FALSE}
+AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+ms <- AgeMatrix %>% 
+  filter(kid_age == ma_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_ma_sex == "Female") %>% 
+  stan_glm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , ., family = gaussian) 
+
+ms %>% summary
+ms_sims <- as.matrix(ms)
+head(ms_sims)
+
+bayesplot::mcmc_areas(ms_sims,
+          pars = c("as.numeric(parent_dayofyear)"),
+          prob = 0.9) +
+  ggtitle("mothers and sons")
+
+ms_sims %>% 
+  summary(mean('as.numeric(parent_dayofyear))'))
+```
+
+# fathers and sons
+
+```{r, eval = FALSE}
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+fs <- AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  stan_glm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , ., family = gaussian) 
+
+fs %>% summary
+fs_sims <- as.matrix(fs)
+head(fs_sims)
+
+bayesplot::mcmc_areas(fs_sims,
+          pars = c("as.numeric(parent_dayofyear)"),
+          prob = 0.9) +
+  ggtitle("fathers and sons")
+
+fs_sims %>% 
+  summary(mean('as.numeric(parent_dayofyear))'))
+```
+
+
+# fathers and daughters
+
+```{r, eval = FALSE}
+AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  lm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , .) %>% 
+  summary()
+
+fd <- AgeMatrix %>% 
+  filter(kid_age == pa_age) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(new_pa_sex == "Male") %>% 
+  stan_glm(as.numeric(kid_dayofyear) ~ as.numeric(parent_dayofyear) , ., family = gaussian) 
+
+fd %>% summary
+fd_sims <- as.matrix(fd)
+head(fd_sims)
+
+bayesplot::mcmc_areas(fd_sims,
+          pars = c("as.numeric(parent_dayofyear)"),
+          prob = 0.9) +
+  ggtitle("fathers and daughters")
+
+fd_sims %>% 
+  summary(mean('as.numeric(parent_dayofyear))'))
+
+```
+
+# now try to calculate the cross-sex genetic correlation
+
+𝑟𝑀𝐹= √((ℎ2𝐹𝐷 × ℎ2𝑀𝑆)/(ℎ2𝑀𝐷 × ℎ2𝐹𝑆 ))
+```{r, eval = FALSE}
+
+md_tib <- as_tibble(md_sims) %>% 
+  rename(dayofyear = 'as.numeric(parent_dayofyear)')
+ms_tib <- as_tibble(ms_sims) %>% 
+  rename(dayofyear = 'as.numeric(parent_dayofyear)')
+fs_tib <- as_tibble(fs_sims) %>% 
+  rename(dayofyear = 'as.numeric(parent_dayofyear)')
+fd_tib <- as_tibble(fd_sims) %>% 
+  rename(dayofyear = 'as.numeric(parent_dayofyear)')
+
+write_csv(md_tib, "bayes_lm_sdate_ma_daughter.csv")
+write_csv(ms_tib, "bayes_lm_sdate_ma_son.csv")
+write_csv(fs_tib, "bayes_lm_sdate_pa_son.csv")
+write_csv(fd_tib, "bayes_lm_sdate_pa_daughter.csv")
+
+gen_cor_spawn <- sqrt((fd_tib[, "dayofyear"] * ms_tib[, "dayofyear"]) / (md_tib[, "dayofyear"] * fs_tib[, "dayofyear"]))
+
+write_csv(gen_cor_spawn, "bayes_lm_sdate_gen_cor.csv")
+
+mean(gen_cor_spawn$dayofyear)
+hdi(gen_cor_spawn)
+effectiveSize(gen_cor_spawn)
+```
+
+```{r}
+md_tib <- read_csv( "bayesian_linear_regressions/bayes_lm_sdate_ma_daughter.csv")
+ms_tib <- read_csv("bayesian_linear_regressions/bayes_lm_sdate_ma_son.csv")
+fs_tib <- read_csv("bayesian_linear_regressions/bayes_lm_sdate_pa_son.csv")
+fd_tib <- read_csv("bayesian_linear_regressions/bayes_lm_sdate_pa_daughter.csv")
+
+gen_cor_spawn <- read_csv("bayesian_linear_regressions/bayes_lm_sdate_gen_cor.csv")
+
+mean(gen_cor_spawn$dayofyear)
+hdi(gen_cor_spawn)
+effectiveSize(gen_cor_spawn)
+```
+
+
+```{r}
+
+MDate <- ggplot(data = AgeMatrix)+
+  geom_boxplot(aes(x = as.character(ma_age), y = as.numeric(parent_dayofyear)))+
+  ggtitle("Ma Age by Spawn Date")+
+  xlab("Ma Age")+
+  ylab("Ma Spawn Date (Day of Year)")
+MDate
+
+PDate <- ggplot(data = AgeMatrix)+
+  geom_boxplot(aes(x = as.character(pa_age), y = as.numeric(parent_dayofyear)))+
+  ggtitle("Pa Age by Spawn Date")+
+  ylab("Pa Spawn Date (Day of Year)")+
+  xlab("Pa Age")
+PDate
+
+KDate <- ggplot(data = AgeMatrix)+
+  geom_boxplot(aes(x = as.character(kid_age), y = as.numeric(kid_dayofyear)))+
+  ggtitle("Kid Age by Spawn Date")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  xlab("Kid Age")
+KDate
+
+Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  ggplot()+
+  geom_boxplot(aes(x = as.character(kid_age), y = as.numeric(kid_dayofyear)))+
+  ggtitle("Kid Age by Spawn Date")+
+  ylab("Kid Spawn Date (Day of Year)")+
+  xlab("Kid Age")
+
+a <- Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  group_by(as.character(kid_age)) %>% 
+  summarise(mean(as.numeric(kid_dayofyear))) %>% 
+  rename(Z = 'mean(as.numeric(kid_dayofyear))') %>% 
+  rename(kid_age = 'as.character(kid_age)')
+a
+
+sp_day_age <- Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  ggplot()+
+  geom_histogram(aes(y = as.numeric(kid_dayofyear), x = ..density.., fill = as.character(kid_age)), binwidth = 5)+
+  facet_wrap(~as.character(kid_age))+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")+
+  geom_hline(data = a, aes(yintercept = Z), color = "#666666", size = 1)+
+  labs(y = "Day of Spawning")+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5), legend.position = "none")+
+  scale_y_continuous(breaks = seq(0,120,5))
+sp_day_age
+
+sda <- Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  ggplot()+
+  geom_histogram(aes(x = as.numeric(kid_dayofyear), y = ..density.., fill = as.character(kid_age)), binwidth = 5)+
+  facet_grid(as.character(kid_age)~.)+
+  theme_classic()+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b", "#c49b60"))+
+  geom_vline(data = a, aes(xintercept = Z), color = "#193439", size = 1)+
+  labs(x = "Day of Spawning")+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5), legend.position = "none")+
+  scale_x_continuous(breaks = seq(0,120,5))
+sda
+
+Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  ggplot()+
+  geom_bar(aes(x = as.numeric(kid_dayofyear), y = ..prop.., fill = as.character(kid_age)), position = "fill")+
+  facet_grid(as.character(new_kid_sex)~.)+
+  theme_classic()+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b", "#c49b60"))+
+  labs(x = "Day of Spawning")+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5), legend.position = "none")+
+  scale_x_continuous(breaks = seq(0,120,5))
+
+stuff <- Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  filter(!is.na(new_kid_sex))
+stuff$kid_dayofyear <- as.numeric(stuff$kid_dayofyear)
+stuff2 <- stuff %>% 
+  mutate(bin5 = cut_interval(kid_dayofyear, length = 5 , labels = F)) %>% 
+  select(kid_dayofyear, bin5, everything()) %>% 
+  group_by(bin5, new_kid_sex) %>% 
+  count(kid_age) %>% 
+  mutate(frac = n/(sum(n))) %>% 
+  mutate(bin_to_days = bin5 * 5)
+
+stuff2 
+
+stuff3 <- stuff2 %>% 
+  summarize(sum(n)) %>% 
+  rename(sum_n = 'sum(n)') %>% 
+  mutate(bin_to_days = bin5 * 5)
+
+
+sday_fill <- stuff2 %>% 
+  ggplot()+
+  geom_col(aes(x = bin_to_days, y = frac, fill = as.character(kid_age)), position = "fill")+
+  facet_grid(as.character(new_kid_sex)~.)+
+  theme_classic()+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b", "#c49b60"))+
+  labs(x = "Day of Spawning", fill = "Age", y = "Proportion")+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5))+
+  scale_x_continuous(breaks = seq(5,115,5))+
+  geom_text(data = stuff3, aes( x = bin_to_days, label = sum_n, y = bin5), stat = "identity", position = position_fill(vjust = -0.08), size = 2.5)
+sday_fill
+
+stuff %>%  arrange(desc(kid_dayofyear))
+  
+stuff %>% 
+  mutate(bin5 = cut_interval(kid_dayofyear, length = 5 , labels = F)) %>% 
+  mutate(bin_to_days = bin5 * 5) %>% 
+  select(kid_dayofyear, bin5,bin_to_days, everything()) %>% 
+  count(new_kid_sex, bin5)
+
+Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  group_by(kid_age) %>% 
+  summarize(mean(as.numeric(kid_dayofyear)), sd(as.numeric(kid_dayofyear)))
+```
+
+KW of spawn date and age groups
+```{r}
+kruskal.test(data = stuff, kid_dayofyear ~ kid_age)
+# groups are significantly different
+
+```
+
+
+```{r}
+new_stuff <- AgeMatrix %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  filter(!is.na(new_kid_sex))
+new_stuff$kid_dayofyear <- as.numeric(new_stuff$kid_dayofyear)
+new_stuff$parent_dayofyear <- as.numeric(new_stuff$parent_dayofyear)
+
+#kid and parent bins
+kid_stuff2 <- new_stuff %>% 
+  mutate(kid_bin5 = cut_interval(kid_dayofyear, length = 5 , labels = F)) %>% 
+  mutate(kid_bin_to_days = kid_bin5 * 5) %>% 
+  mutate(pbin5 = cut_interval(parent_dayofyear, length = 5 , labels = F)) %>% 
+  select(kid_dayofyear, kid_bin_to_days, kid_age, parent_dayofyear, mid_age, everything()) %>% 
+  mutate(parent_bin_to_days = pbin5 * 5, .after = parent_dayofyear)
+
+#regression of spawn dates when binned to 5 day intervals
+
+kid_stuff2 %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  ggplot()+
+  geom_count(aes(x = parent_bin_to_days, y = kid_bin_to_days, color = as.character(kid_age)), shape = 1)+
+  #ggtitle("kid_age = mid_age")+
+  xlab("Parent Spawn Date bin")+
+  ylab("Offspring Spawn Date bin")+
+  labs(color = "Age")+
+  geom_smooth(method = "lm", aes(x = parent_bin_to_days, y = kid_bin_to_days), color="#193439")+
+  theme_classic()+
+  scale_color_manual(values = c("#503143", "#79ad9f", "#9a532b"))+
+  coord_fixed(ratio = 1, xlim = c(0, 120), ylim = c(1, 120), expand = F)+
+  scale_x_continuous(breaks = seq(0, 120, 5))+
+  scale_y_continuous(breaks = seq(0, 120, 5))+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
+
+kid_stuff2 %>% 
+  filter(kid_age == mid_age) %>% 
+  filter(age_pair != "2_4") %>% 
+  lm(kid_bin_to_days ~ parent_bin_to_days, .) %>% 
+  summary()
+
+# slope and r2 are the same as in the normal regression
+```
+
+
+```{r}
+stuff_age <- stuff %>% 
+  select(kid_age, kid_dayofyear, everything()) %>% 
+  mutate(bin5 = cut_interval(kid_dayofyear, length = 5 , labels = F)) %>% 
+  select(kid_dayofyear, bin5, everything()) %>% 
+  group_by(kid_age, new_kid_sex) %>% 
+  count(bin5) %>% 
+  mutate(frac = n/(sum(n))) %>% 
+  mutate(bin_to_days = bin5 * 5)
+
+stuff_age %>% 
+  ggplot()+
+  geom_col(aes(x = bin_to_days, y = frac, fill = as.character(kid_age)))+
+  facet_grid(kid_age~ new_kid_sex)+
+  geom_smooth(aes(y = frac, x = bin_to_days), method  = "lm", se = F)
+
+stuff_age %>% 
+  filter(kid_age == 2) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  lm(frac ~ bin_to_days, .) %>% 
+  summary()
+
+
+stuff_age %>% 
+  filter(kid_age == 2) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  lm(frac ~ bin_to_days, .) %>% 
+  summary()
+
+stuff_age %>% 
+  filter(kid_age == 4) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  lm(frac ~ bin_to_days, .) %>% 
+  summary()
+
+
+stuff_age %>% 
+  filter(kid_age == 4) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  lm(frac ~ bin_to_days, .) %>% 
+  summary()
+
+stuff_age %>% 
+  filter(kid_age == 3) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  lm(frac ~ bin_to_days, .) %>% 
+  summary()
+
+
+stuff_age %>% 
+  filter(kid_age == 3) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  lm(frac ~ bin_to_days, .) %>% 
+  summary()
+```
+
+
+```{r}
+stuff %>% 
+  mutate(bin5 = cut_interval(kid_dayofyear, length = 5 , labels = F)) %>% 
+  mutate(bin_to_days = bin5 * 5) %>% 
+  select(kid_dayofyear, bin5,bin_to_days, everything()) %>% 
+  filter(bin5 == 1, new_kid_sex == "Female", kid_age == 4)
+  
+```
+
+
+```{r}
+#Spawn day by year
+Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  ggplot()+
+  geom_histogram(aes(x = as.numeric(kid_dayofyear), y = ..density.., fill = as.character(kid_age)), binwidth = 5)+
+  facet_grid(as.character(kid_age)~kid_year)+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")+
+  labs(x = "Day of Spawning")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5), legend.position = "none")+
+  scale_x_continuous(breaks = seq(0,120,30))
+
+Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  group_by(as.character(kid_age), kid_year) %>% 
+  summarise(mean(as.numeric(kid_dayofyear))) %>% 
+  arrange(kid_year)
+  
+```
+
+```{r}
+Ped_length_age %>% 
+  count(kid_year, kid_dayofyear)
+  
+```
+
+
+```{r}
+Ped_length_age %>% 
+  filter(kid_dayofyear > 300)
+Ped_length_age %>% 
+  filter(is.na(kid_dayofyear))
+Ped_length_age %>% 
+  filter(kid_age == 5)
+
+day_year_neg <- Ped_length_age %>% 
+  mutate(new_kid_dayofyear = ifelse(kid_dayofyear == "344", yes = "-21", no = kid_dayofyear))
+day_year_neg$new_kid_dayofyear <- as.numeric(day_year_neg$new_kid_dayofyear)
+
+day_year_neg %>% 
+  filter(kid_age != 5) %>% 
+  summarise(mean(new_kid_dayofyear, na.rm = T))
+
+day_year_neg %>% 
+  filter(kid_age != 5) %>% 
+  group_by(kid_age) %>% 
+  summarise(mean(new_kid_dayofyear, na.rm = T))
+
+Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age != 5) %>% 
+  summarise(mean(as.numeric(kid_dayofyear)))
+
+Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  group_by(new_kid_sex) %>% 
+  summarise(mean(as.numeric(kid_dayofyear))) 
+
+Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  group_by(new_kid_sex,as.character(kid_age)) %>% 
+  summarise(mean(as.numeric(kid_dayofyear))) 
+
+
+Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_histogram(aes(y = as.numeric(kid_dayofyear), x = ..density.., fill = as.character(kid_age)), position = "dodge", binwidth = 5)+
+  facet_wrap(~new_kid_sex)+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")+
+  labs(y = "Day of Spawning")+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5), legend.position = "none")+
+  scale_y_continuous(breaks = seq(0,120,5))
+
+Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age <5) %>%
+  ggplot()+
+  geom_boxplot(aes(x = as.character(kid_age), y = as.numeric(kid_dayofyear), color = new_kid_sex))+
+  ggtitle("Spawn Date by Age")+
+  xlab("Age")+
+  ylab("Spawn Date (Day of Year)")+
+  scale_color_manual(values = c("sky blue", "blue"))
+
+
+
+r <- Ped_length_age %>% 
+  filter(kid_dayofyear < 300) %>% 
+  filter(kid_age != 5)
+r$kid_dayofyear <- as.numeric(r$kid_dayofyear)
+r$parent_dayofyear <- as.numeric(r$parent_dayofyear)
+
+kruskal.test(r$kid_dayofyear, r$parent_dayofyear)
+kruskal.test(r$kid_dayofyear, r$kid_age)
+
+r %>% 
+  summarise(mean(kid_dayofyear), sd(kid_dayofyear), mean(parent_dayofyear, na.rm = T), sd(parent_dayofyear, na.rm = T))
+```
+
+```{r}
+Ped_length_age %>% 
+  filter(ma_hatchery != pa_hatchery)
+
+table <- Ped_length_age %>% 
+  filter(ma_hatchery == pa_hatchery) %>% 
+  count(ma_hatchery, kid_hatchery, SpawnYear, kid_year)
+table
+
+#this is also needed for the table
+fish_list_age %>% 
+  separate(year, c("year1", "year2"), sep = ",") %>% 
+  count(hatchery, year1)
+  
+```
+
+```{r}
+#length and age groups, 2 vs 3+
+Ped_length_age_rm5yr %>% 
+  mutate(AgeGroup = ifelse(kid_age == 2, yes = "2", no = "3+")) %>% 
+  ggplot()+
+  geom_histogram(aes(x = kid_length, y =..density.., fill = AgeGroup), position = "dodge", binwidth = 25)+
+  ggtitle("Age and Length")+ 
+  labs(fill = "Age Group")+
+  xlab("Length (mm)")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+
+
+Ped_length_age_rm5yr %>% 
+  mutate(AgeGroup = ifelse(kid_age == 2, yes = "2", no = "3+")) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_histogram(aes(x = kid_length, y =..density.., fill = AgeGroup), position = "dodge", binwidth = 25)+
+  ggtitle("Age and Length")+ 
+  labs(fill = "Age Group")+
+  xlab("Length (mm)")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2") +
+  facet_wrap(~new_kid_sex)
+
+```
+
+```{r}
+#boxplots
+Ped_length_age_rm5yr %>% 
+  mutate(AgeGroup = ifelse(kid_age == 2, yes = "2", no = "3+")) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_boxplot(aes(y = kid_length, x= AgeGroup))+
+  ggtitle("Age and Length")+ 
+  labs(fill = "Age Group")+
+  xlab("Length (mm)")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2") +
+  facet_wrap(~new_kid_sex)
+
+Ped_length_age_rm5yr %>% 
+  mutate(AgeGroup = ifelse(kid_age == 2, yes = "2", no = "3+")) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ggplot()+
+  geom_boxplot(aes(y = kid_length, x= AgeGroup))+
+  ggtitle("Age and Length")+ 
+  labs(fill = "Age Group")+
+  xlab("Length (mm)")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+
+Ped_length_age_rm5yr %>% 
+  mutate(AgeGroup = ifelse(kid_age == 2, yes = "2", no = "3+")) %>% 
+  filter(kid_dayofyear <300) %>% 
+  ggplot()+
+  geom_boxplot(aes(y = as.numeric(kid_dayofyear), x= AgeGroup))+
+  ggtitle("Age and Length")+ 
+  labs(fill = "Age Group")+
+  xlab("Length (mm)")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+
+Ped_length_age_rm5yr %>% 
+  mutate(AgeGroup = ifelse(kid_age == 2, yes = "2", no = "3+")) %>% 
+  filter(kid_dayofyear <300) %>% 
+  ggplot()+
+  geom_boxplot(aes(y = as.numeric(kid_dayofyear), x= as.character(kid_age)))+
+  ggtitle("Age and Length")+ 
+  labs(fill = "Age Group")+
+  xlab("Length (mm)")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+
+#What about length by spawn day?
+###next: replace this with fish list data with length and day of year
+Ped_length_age_rm5yr %>% 
+  mutate(AgeGroup = ifelse(kid_age == 2, yes = "2", no = "3+")) %>% 
+  filter(kid_dayofyear <300) %>%
+  ggplot()+
+  geom_count(aes(x = kid_length, y = as.numeric(kid_dayofyear)))+
+  scale_size_area()+
+  geom_smooth(method = "lm", aes(x = kid_length, y = as.numeric(kid_dayofyear)))+
+  labs(title = "Body Length in relation to Spawn Date")+
+  xlab("Body Length (mm)")+
+  ylab("Spawn Date (Day of Year)")+
+  scale_x_continuous(breaks = seq(400, 900, 50), limits = c(400, 900))
+
+#lm(y~x)
+i <- Ped_length_age_rm5yr %>% 
+  mutate(AgeGroup = ifelse(kid_age == 2, yes = "2", no = "3+")) %>% 
+  filter(kid_dayofyear <300) %>%
+  lm(as.numeric(kid_dayofyear) ~ kid_length, .)
+
+summary(i)
+plot(resid(i))
+
+fishlist_age_spawnday <- fish_list_age %>% 
+  separate(spawner_group, c("sg_1", "sg_2", "sg_3"), sep = ",") %>% 
+  separate(year, c("year1", "year2"), sep = ",") %>% 
+  mutate(date = mdy(sg_1)) %>% 
+  mutate(dayofyear = strftime(date, format = "%j")) %>% 
+  select(indiv, year1, sg_1, dayofyear, everything()) 
+
+daylenage <- fishlist_age_spawnday %>% 
+  filter(dayofyear <300) %>% 
+  ggplot()+
+  geom_count(aes(x = length, y = as.numeric(dayofyear), color = as.character(age)))+
+  scale_size_area()+
+  geom_smooth(method = "lm", aes(x = length, y = as.numeric(dayofyear)))+
+  labs(title = "Body Length in relation to Spawn Date")+
+  xlab("Body Length (mm)")+
+  ylab("Spawn Date (Day of Year)")+
+  scale_x_continuous(breaks = seq(400, 900, 50), limits = c(400, 900))+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+daylenage
+
+
+#lm(y~x)
+fishlist_age_spawnday %>% 
+  filter(dayofyear <300) %>%
+  lm(as.numeric(dayofyear) ~ length, .) %>% 
+  summary
+
+fishlist_age_spawnday %>% 
+  filter(dayofyear <300) %>% 
+  ggplot()+
+  geom_count(aes(y = length, x = as.numeric(dayofyear), color = as.character(age)))+
+  scale_size_area()+
+  geom_smooth(method = "lm", aes(y = length, x = as.numeric(dayofyear)))+
+  labs(title = "Body Length in relation to Spawn Date")+
+  ylab("Body Length (mm)")+
+  xlab("Spawn Date (Day of Year)")+
+  scale_y_continuous(breaks = seq(400, 900, 50), limits = c(400, 900))+
+  theme_classic()+
+  scale_color_brewer(palette = "Dark2")
+#lm(y~x)
+fishlist_age_spawnday %>% 
+  filter(dayofyear <300) %>%
+  lm(length ~ as.numeric(dayofyear), .) %>% 
+  summary
+```
+
+
+kruskal walis tests
+```{r}
+kruskal.test(kid_age ~ pa_age, data = AgeMatrix)
+kruskal.test(kid_age ~ ma_age, data = AgeMatrix)
+kruskal.test(kid_age ~ mid_age, data = AgeMatrix)
+
+fishlist_age_spawnday %>% 
+  filter(dayofyear <300) %>%
+  kruskal.test(age ~ as.numeric(dayofyear), .) 
+
+fishlist_age_spawnday %>% 
+  filter(dayofyear <300) %>%
+  filter(!is.na(new_sex)) %>% 
+  kruskal.test(age ~ new_sex, .) 
+
+fishlist_age_spawnday %>% 
+  filter(dayofyear <300) %>%
+  kruskal.test(length ~ as.numeric(dayofyear), .)
+```
+
+```{r}
+#mean spawn day
+fishlist_age_spawnday %>% 
+  summarize(mean(as.numeric(dayofyear), na.rm = T))
+Ped_length_age %>% 
+  summarise(mean(as.numeric(kid_dayofyear), na.rm = T))
+Ped_length_age %>% 
+  summarise(mean(as.numeric(parent_dayofyear), na.rm = T))
+```
+
+```{r}
+#mean spawn day by age
+fishlist_age_spawnday %>%
+  filter(!is.na(age)) %>% 
+  filter(age < 5) %>% 
+  group_by(age) %>% 
+  summarise(mean(as.numeric(dayofyear), na.rm = T))
+```
+
+
+```{r}
+library(tidyverse)
+ggplot(data = LenMatrix)+
+  geom_count(aes(x = kid_length, y = mid_length))+
+  ggtitle("Kid Length by Mid Parent Length")+
+  xlab("Kid Length (mm)")+
+  ylab("Average Parent Length (mm)")
+
+kruskal.test(kid_length ~ mid_length, data = LenMatrix)
+
+```
+
+Want to make a "transition matrix" for males/females/mid-parent age, for each parent age, what is the distribution of offspring? 
+```{r}
+All_Kids <- AgeMatrix %>%
+  filter(SpawnYear < 2018) %>% 
+  group_by(new_kid_sex, kid_age) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n))
+
+Fathers <- AgeMatrix %>%
+  filter(SpawnYear < 2018) %>% 
+  group_by(pa_age,new_pa_sex, new_kid_sex,kid_age) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n))
+
+Mothers <- AgeMatrix %>%
+  filter(SpawnYear < 2018) %>% 
+  group_by(ma_age,new_ma_sex, new_kid_sex,kid_age) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n))
+
+MidParent <- AgeMatrix %>%
+  filter(SpawnYear < 2018) %>% 
+  group_by(mid_age, age_pair, new_kid_sex, kid_age) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n))
+
+All_Kids
+Fathers
+Mothers
+MidParent
+
+write_csv(Fathers ,"RR_2007-2020_transition_matrix_fathers.csv")
+write_csv(Mothers, "RR_2007-2020_transition_matrix_mothers.csv")
+write_csv(MidParent, "RR_2007-2020_transition_matrix_midparent.csv")
+
+```
+
+Make a maturation transition matrix
+```{r}
+pa <- Fathers %>% rename(parent_sex = new_pa_sex, parent_age = pa_age)
+ma <- Mothers %>%  rename(parent_sex = new_ma_sex, parent_age = ma_age)
+mid <- MidParent %>% rename(parent_age = mid_age)
+maturation_transition <- bind_rows(pa, ma, mid)
+maturation_transition
+
+
+maturation_transition %>% 
+  filter(kid_age == 2) %>% 
+  arrange(parent_age)
+
+```
+
+```{r}
+#linear regressions of ages
+ggplot(data = AgeMatrix)+
+  geom_count(aes(y = kid_age, x = mid_age, color = as.character(new_kid_sex)))+
+  geom_smooth(method = "lm", aes(y = kid_age, x = mid_age))
+#lm(y~x)
+lm(kid_age ~ mid_age, AgeMatrix) %>% summary
+
+ggplot(data = AgeMatrix)+
+  geom_count(aes(y = kid_age, x = pa_age, color = as.character(new_kid_sex)))
+#lm(y~x)
+lm(kid_age ~ pa_age, AgeMatrix) %>% summary
+
+#lm(y~x)
+AgeMatrix %>% filter(new_kid_sex == "Male") %>% 
+  lm(kid_age ~ pa_age, .) %>%  summary
+#lm(y~x)
+lm(kid_age ~ ma_age, AgeMatrix) %>% summary
+#lm(y~x)
+AgeMatrix %>% filter(new_kid_sex == "Female") %>% 
+  lm(kid_age ~ ma_age, .) %>%  summary
+```
+```{r}
+#making bar plot of maturity as seen in Hankin 1993...
+#first with all kids and fathers
+AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_pa_sex == "Male") %>% 
+  group_by(pa_age) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop.., fill = as.character(pa_age)), position = "dodge")+
+  ylim(0,1.0)+
+  ggtitle("Fathers and All offspring")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+
+#next just the male offspring and fathers
+male_age <- AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_kid_sex == "Male") %>%
+  filter(new_pa_sex == "Male") %>% 
+  group_by(pa_age) %>% 
+  ggplot()+
+  geom_bar(aes(x= kid_age, y = ..prop.. , fill = as.character(pa_age)), position = "dodge")+
+  ylim(0, 1.0)+
+  ylab("Proportion of Male Offspring")+
+  xlab("Age at Maturity for Male Offspring")+
+  guides(fill=guide_legend("Father Age at Maturity"))+
+  scale_fill_brewer(palette = "Dark2")+
+  theme_classic()+
+  ggtitle("pas and male offspring")
+male_age
+#fathers and female offspring
+AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_kid_sex == "Female") %>%
+  filter(new_pa_sex == "Male") %>% 
+  group_by(pa_age) %>% 
+  ggplot()+
+  geom_bar(aes(x= kid_age, y = ..prop.. , fill = as.character(pa_age)), position = "dodge")+
+  ylim(0, 1.0)+
+  ylab("Proportion of female Offspring")+
+  xlab("Age Female Offspring")+
+  guides(fill=guide_legend("Father Age"))+
+  scale_fill_brewer(palette = "Dark2")+
+  theme_classic()+
+  ggtitle("pas and female offspring")
+
+#fathers and sons by father's age groups:
+AgeMatrix %>% 
+  mutate(AgeGroup = ifelse(pa_age == 2, "2", "3+")) %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_kid_sex == "Male") %>%
+  filter(new_pa_sex == "Male") %>% 
+  group_by(pa_age) %>% 
+  ggplot()+
+  geom_bar(aes(x= kid_age, y = ..prop.., fill = AgeGroup), position = "dodge")+
+  ylim(0, 1.0)+
+  ylab("Proportion of Male Offspring")+
+  xlab("Age at Maturity for Male Offspring")+
+  guides(fill=guide_legend("Father Age at Maturity"))+
+  scale_fill_brewer(palette = "Dark2")+
+  theme_classic()+
+  ggtitle("pas and male offspring")
+
+AgeMatrix %>% 
+  mutate(AgeGroup = ifelse(pa_age == 2, "2", "3+")) %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_kid_sex == "Male") %>%
+  filter(new_pa_sex == "Male") %>% 
+  group_by(pa_age) %>% 
+  summarize(mean(kid_age), sd(kid_age))
+
+AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_kid_sex == "Male") %>%
+  filter(new_pa_sex == "Male") %>%
+  kruskal.test(kid_age ~ pa_age, .)
+```
+
+
+```{r}
+#midparent and all offspring
+mid_age <- AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  group_by(mid_age) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop.., fill = as.character(mid_age)), position = "dodge")+
+  ylim(0,1.0)+
+  #ggtitle("MidParent and all offspring")+
+  theme_classic()+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b", "#c49b60", "#193439"))+
+  labs(fill = "Midparent age")+
+  xlab("Offspring age")+
+  ylab("Proportion")
+mid_age
+
+ggsave("RR_mid_age.png", plot = mid_age, width = 6, height = 4)
+
+AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  group_by(mid_age) %>% 
+  count(kid_age)
+  
+#midparent value and male offspring
+male_mid <- AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_kid_sex == "Male") %>%
+  group_by(mid_age) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop.., fill = as.character(mid_age)), position = "dodge")+
+  ylim(0,1.0)+
+  #ggtitle("MidParent and male offspring")+
+  theme_classic()+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b", "#c49b60", "#193439"))+
+  labs(fill = "Midparent age")+
+  xlab("Male offspring age")+
+  ylab("Proportion")
+male_mid
+ggsave("RR_mid_age_m.png", plot = male_mid, width = 6, height = 4)
+
+AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_kid_sex == "Male") %>%
+  group_by(mid_age) %>% 
+  count(kid_age)
+
+#midparent value and female offspring
+f_mid <- AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_kid_sex == "Female") %>%
+  group_by(mid_age) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop.., fill = as.character(mid_age)), position = "dodge")+
+  ylim(0,1.0)+
+  #ggtitle("MidParent and female offspring")+
+  theme_classic()+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b", "#c49b60", "#193439"))+
+  labs(fill = "Midparent age")+
+  xlab("Female offspring age")+
+  ylab("Proportion")
+f_mid
+ggsave("RR_mid_age_f.png", plot = f_mid, width = 6, height = 4)
+
+AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_kid_sex == "Female") %>%
+  group_by(mid_age) %>% 
+  count(kid_age)
+```
+
+```{r}
+mid_age_count <- AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  group_by(mid_age) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop.., fill = as.character(mid_age)), position = "dodge")+
+  ylim(0,1.0)+
+  #ggtitle("MidParent and all offspring")+
+  theme_classic()+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b", "#c49b60", "#193439"))+
+  labs(fill = "Midparent age")+
+  xlab("Offspring age")+
+  ylab("Proportion")+
+  geom_text(aes( x = kid_age, label = ..count.., y = ..prop..), stat = "count", position = position_fill(vjust = -0.05), size = 3)+
+  scale_y_continuous()
+mid_age_count
+```
+
+
+```{r}
+##mothers and all offspring
+AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_ma_sex == "Female") %>%
+  group_by(ma_age) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop.., fill = as.character(ma_age)), position = "dodge")+
+  ylim(0,1.0)+
+  ggtitle("ma and all offspring")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+
+##mothers and females
+female_age <- AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_kid_sex == "Female") %>%
+  filter(new_ma_sex == "Female") %>%
+  group_by(ma_age) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop.., fill = as.character(ma_age)), position = "dodge")+
+  ylim(0,1.0)+
+  ggtitle("Ma and female offspring")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+female_age
+
+AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_kid_sex == "Female") %>%
+  filter(new_ma_sex == "Female") %>%
+  group_by(ma_age) %>% 
+  summarize(mean(kid_age), sd(kid_age))
+
+## mothers and males
+AgeMatrix %>% 
+  filter(kid_age < 5) %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_kid_sex == "Male") %>%
+  filter(new_ma_sex == "Female") %>%
+  group_by(ma_age) %>% 
+  ggplot()+
+  geom_bar(aes(x=kid_age, y = ..prop.., fill = as.character(ma_age)), position = "dodge")+
+  ylim(0,1.0)+
+  ggtitle("Ma and male offspring")+
+  theme_classic()+
+  scale_fill_brewer(palette = "Dark2")
+
+```
+
+```{r}
+AgeMatrix %>% 
+  filter(SpawnYear < 2018) %>% 
+  group_by(ma) %>% 
+  distinct(ma)
+#3378 pas in age matrix
+#1947 mas in age matrix
+
+s <- AgeMatrix %>% 
+  filter(SpawnYear < 2018) %>% 
+  group_by(pa) %>% 
+  summarise(mean(as.numeric(pa_age))) %>% 
+  ungroup() %>% 
+  rename(z = "mean(as.numeric(pa_age))")
+
+mean(s$z)
+#pa  2.641504
+#ma  2.959425
+```
+
+Now I want to look at straying of fish from on hatchery to the next (offspring hatchery doesn't equal parents hatchery)
+```{r}
+
+stray <- Ped_length_age %>% 
+  filter(ma_hatchery == pa_hatchery) %>% 
+  filter(kid_hatchery != ma_hatchery)
+stray #797 kids with hatchery that doesn't match their mother's hatchery
+
+count(stray, ma_hatchery, kid_hatchery, new_kid_sex)
+count(stray, new_kid_sex)
+count(stray, ma_hatchery, kid_hatchery, new_kid_sex, kid_age)
+count(stray, kid_year, ma_hatchery, kid_hatchery, kid_age, new_kid_sex)
+
+count(stray, SpawnYear, ma_hatchery, kid_hatchery, kid_age, new_kid_sex)
+```
+
+
+```{r}
+stray_freq <- Ped_length_age %>%
+  filter(ma_hatchery == pa_hatchery) %>% 
+  mutate(straying = ifelse(kid_hatchery != pa_hatchery, "yes", "no")) %>% 
+  group_by(SpawnYear, pa_hatchery, kid_hatchery) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n)) %>% 
+  arrange(SpawnYear,pa_hatchery, kid_hatchery) %>% 
+  ungroup() 
+
+stray_freq %>% 
+  filter(pa_hatchery != kid_hatchery) %>% 
+  mutate(hatchery_switch = ifelse(pa_hatchery == "Warm_Springs", yes = "WS to CV", no = "CV to WS")) %>% 
+  select(-pa_hatchery, -kid_hatchery) %>% 
+  group_by(hatchery_switch)
+```
+looks like there is trend in straying from certain cohorts (born the same year)
+```{r}
+stray_freq_sex <- Ped_length_age %>%
+  filter(ma_hatchery == pa_hatchery) %>% 
+  mutate(straying = ifelse(kid_hatchery != pa_hatchery, "yes", "no")) %>% 
+  group_by(SpawnYear, pa_hatchery, kid_hatchery, new_kid_sex) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n)) %>% 
+  arrange(SpawnYear,pa_hatchery, kid_hatchery) %>% 
+  ungroup() 
+stray_freq_sex
+
+stray_count <- stray %>% 
+  mutate(hatch_switch = ifelse(kid_hatchery == "Warm_Springs", yes = "CV to WS", no = "WS to CV")) %>% 
+  ggplot()+
+  geom_histogram(aes(x = SpawnYear, y = ..count.., fill = kid_sex),binwidth = 1, position = "dodge")+
+  labs( x= "Cohort Year", title = "Offspring returning to a different hatchery than parents")+
+  facet_wrap(~hatch_switch)+
+  scale_x_continuous(breaks = seq(2007, 2018, by =1))+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_fill_brewer(palette = "Dark2")+
+  labs(fill = "Sex")
+stray_count
+
+stray_density <- stray %>% 
+  mutate(hatch_switch = ifelse(kid_hatchery == "Warm_Springs", yes = "CV to WS", no = "WS to CV")) %>% 
+  ggplot()+
+  geom_histogram(aes(x = SpawnYear, y = ..density.., fill = kid_sex),binwidth = 1, position = "dodge")+
+  labs( x= "Cohort Year", title = "Offspring returning to a different hatchery than parents")+
+  facet_wrap(~hatch_switch)+
+  scale_x_continuous(breaks = seq(2007, 2018, by =1))+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_fill_brewer(palette = "Dark2")+
+  labs(fill = "Sex")
+stray_density
+```
+
+how about year of return for the kids..
+```{r}
+stray %>% 
+  mutate(hatch_switch = ifelse(kid_hatchery == "Warm_Springs", yes = "CV to WS", no = "WS to CV")) %>% 
+  ggplot()+
+  geom_histogram(aes(x = kid_year, y = ..density.., fill = kid_sex),binwidth = 1, position = "dodge")+
+  labs( x= "Return Year", title = "Offspring returning to a different hatchery than parents")+
+  facet_wrap(~hatch_switch)+
+  scale_x_continuous(breaks = seq(2007, 2020, by =1))+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_fill_brewer(palette = "Dark2")+
+  labs(fill = "Sex")
+
+stray %>% 
+  mutate(hatch_switch = ifelse(kid_hatchery == "Warm_Springs", yes = "CV to WS", no = "WS to CV")) %>% 
+  ggplot()+
+  geom_histogram(aes(x = kid_year, y = ..count.., fill = kid_sex),binwidth = 1, position = "dodge")+
+  labs( x= "Returnt Year", title = "Offspring returning to a different hatchery than parents")+
+  facet_wrap(~hatch_switch)+
+  scale_x_continuous(breaks = seq(2007, 2020, by =1))+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_fill_brewer(palette = "Dark2")+
+  labs(fill = "Sex")
+```
+I want to make the relative repro success script so that i can seperate the groups by hatchery
+```{r}
+# Make a dataframe for parentpairs, year and hatchery
+Kid_Pa_Ma_Age_Pair %>% 
+  filter(ma_hatchery != pa_hatchery)
+Kid_Pa_Ma_Age_Pair %>% 
+  filter(ma_hatchery == pa_hatchery)
+#will include all pairs and list them by the ma's hatchery
+# 2007-2018 parent spawn years
+#### (2) want to look at relative reproductive success: males, females and pairs ####
+Hatch.pairs.rrs <- Kid_Pa_Ma_Age_Pair %>% 
+  count(pair, ma_hatchery) %>% 
+  mutate(type = "pair") %>% 
+  rename(id = pair)
+Hatch.pa.rrs <- Kid_Pa_Ma_Age_Pair %>% 
+  filter(ma_hatchery == pa_hatchery) %>% 
+  count(pa, ma_hatchery) %>% 
+  mutate(type = "pa") %>% 
+  rename(id = pa)
+Hatch.ma.rrs <- Kid_Pa_Ma_Age_Pair %>% 
+  filter(ma_hatchery == pa_hatchery) %>% 
+  count(ma, ma_hatchery) %>% 
+  mutate(type = "ma") %>% 
+  rename(id = ma)
+
+All.hatch <-  bind_rows(Hatch.pairs.rrs, Hatch.ma.rrs, Hatch.pa.rrs)%>% 
+  group_by(type) %>% arrange(desc(type))
+All.hatch %>% group_by(ma_hatchery, type) %>% summarise_all(funs(mean))
+
+All.Hatch.rrs <- bind_rows(Hatch.pairs.rrs, Hatch.ma.rrs, Hatch.pa.rrs)%>% 
+  group_by(type) %>% arrange(desc(type)) %>% 
+  count(n)
+
+Repro_fig <- ggplot(data = All.Hatch.rrs)+
+  geom_point(aes(x = n, y = nn, color = type, shape = type))+
+  #ggtitle("Relative Reproductive Success")+
+  xlab("Number of Offspring")+
+  ylab("Number of Occurrences")+
+  scale_color_manual(values = c("#503143", "#79ad9f", "#9a532b"))+
+  theme_classic()+
+  scale_x_continuous(breaks = seq(0,70, 5))#+
+  scale_y_continuous(breaks = seq(0,4000, 500))
+Repro_fig
+
+write_csv(Hatch.pairs.rrs, "RR_offspring_num_per_pair.csv")
+
+Kid_Pa_Ma_Age_Pair %>% count(SpawnYear)
+Kid_Pa_Ma_Age_Pair %>% 
+  filter(SpawnYear < 2013) %>% 
+  filter(ma_hatchery == pa_hatchery) %>% 
+  count(pa, ma_hatchery) %>% 
+  mutate(type = "pa") %>% 
+  rename(id = pa) %>% 
+  summarize(mean(n))
+  #count(n) %>% 
+  #arrange(desc(n))
+
+Kid_Pa_Ma_Age_Pair %>% 
+  filter(SpawnYear < 2019, SpawnYear > 2012) %>% 
+  filter(ma_hatchery == pa_hatchery) %>% 
+  count(pa, ma_hatchery) %>% 
+  mutate(type = "pa") %>% 
+  rename(id = pa) %>% 
+  summarize(mean(n))
+  #count(n) %>% 
+  #arrange(desc(n))
+```
+
+```{r}
+All.hatch %>% group_by(type) %>% summarise_all(funs(mean))
+All.Hatch.rrs
+```
+
+```{r}
+freq_offspring <- All.Hatch.rrs %>%
+  rename(num_offspring = n) %>% 
+  group_by(type) %>%
+  mutate(freq = nn / sum(nn)) %>% 
+  ggplot()+
+  geom_point(aes(x = num_offspring, y = freq, color = type, shape = type), size = 2)+
+  #ggtitle("Relative Reproductive Success")+
+  xlab("Number of Offspring")+
+  ylab("Frequency")+
+  scale_color_manual(labels = c("Female", "Male", "Pair"), values = c("#503143", "#79ad9f", "#9a532b"))+
+  scale_shape_manual(labels = c("Female", "Male", "Pair"), values = c(16,17,15))+
+  theme_classic()+
+  scale_x_continuous(breaks = seq(1,70, 2))+
+  scale_y_continuous(breaks = seq(0,0.6, 0.05))+
+  theme(legend.position = c(0.85, 0.85), legend.title = element_blank(), axis.text.x = element_text(angle = 45, vjust = 0.5))
+freq_offspring
+
+All.Hatch.rrs %>%
+  rename(num_offspring = n) %>% 
+  group_by(type) %>%
+  mutate(freq = nn / sum(nn))
+```
+
+
+```{r}
+ggplot(data = All.hatch)+
+  geom_histogram(aes(x = n, y=..density.., fill = ma_hatchery), position = "dodge", binwidth = 1)+
+  ggtitle("Relative Reproductive Success")+
+  xlab("Number of Offspring")+
+  scale_fill_brewer(palette = "Dark2")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  facet_grid(~type)+
+  theme_classic()
+```
+```{r}
+All.Hatch.rrs <- All.hatch %>% group_by(ma_hatchery, type)
+
+t.test(n~ma_hatchery, data = All.Hatch.rrs)#so this means there is a significantly difference un number of offspring produced from each hatchery...I think
+```
+
+Next I want to look for any correlations between number of progeny and age and size of parent
+```{r}
+Pa.rrs.size <- Ped_length_age %>%
+  filter(SpawnYear <2018) %>% 
+  filter(ma_hatchery == pa_hatchery) %>% 
+  filter(!is.na(pa_length)) %>% 
+  count(pa, ma_hatchery, pa_length, pa_age)
+Ma.rrs.size <- Ped_length_age %>% 
+  filter(SpawnYear <2018) %>% 
+  filter(ma_hatchery == pa_hatchery) %>% 
+  filter(!is.na(ma_length)) %>% 
+  count(ma, ma_hatchery, ma_length, ma_age)
+
+Pa.rrs.size 
+Ma.rrs.size 
+
+ggplot(data = Ma.rrs.size)+
+  geom_count(aes(x= ma_length, y = n))
+
+ggplot(data = Pa.rrs.size)+
+  geom_count(aes(x= pa_length, y = n))
+
+ggplot(data = Ma.rrs.size)+
+  geom_count(aes(x= ma_length, y = n))+
+  facet_wrap(~ma_age)
+
+ggplot(data = Pa.rrs.size)+
+  geom_count(aes(x= pa_length, y = n))+
+  facet_wrap(~pa_age)
+
+ggplot(data = Ma.rrs.size)+
+  geom_count(aes(x= ma_length, y = ma_age))
+
+```
+
+what about linear models on the length and n figures? 
+```{r}
+Ma.rrs.size %>% 
+  filter(!is.na(ma_age)) %>% 
+  ggplot()+
+  geom_count(aes(x= ma_length, y = n, color = as.character(ma_age)))+
+  geom_smooth(method = "lm", color = "#1B9E77", aes(x = ma_length, y = n), formula = y~x)+
+  labs(x = "Length of Mother", y = "Number of offspring that returned to spawn")+
+  scale_color_brewer(palette = "Dark2")+
+  scale_size_area()+
+  theme_classic()+
+  scale_x_continuous(breaks = seq(400,1000, 25))+
+  scale_y_continuous(breaks= seq(0,40, 2))+
+  guides(color = guide_legend("Age of Mother"))
+  
+#lm(y~x)
+Ma.rrs.size %>% 
+  filter(!is.na(ma_age)) %>% 
+  lm(n~ ma_length, .) %>% 
+  summary
+#lm(y~x)
+Pa.rrs.size %>% 
+  filter(!is.na(pa_age)) %>%
+  lm(n~ pa_length, .) %>% 
+  summary
+
+Pa.rrs.size %>% 
+  filter(!is.na(pa_age)) %>% 
+  ggplot()+
+  geom_count(aes(x= pa_length, y = n, color = as.character(pa_age)))+
+  geom_smooth(method = "lm", color = "#1B9E77", aes(x = pa_length, y = n), formula = y~x)+
+  labs(x = "Length of Father", y = "Number of offspring that returned to spawn")+
+  scale_color_brewer(palette = "Dark2")+
+  scale_size_area()+
+  theme_classic()+
+  scale_x_continuous(breaks = seq(400,1000, 25))+
+  scale_y_continuous(breaks= seq(0,40, 2))+
+  guides(color = guide_legend("Age of Father"))
+```
+
+What are the means for each age group? 
+lm for ages and number of offspring?
+```{r}
+ggplot(data = Ma.rrs.size)+
+  geom_boxplot(aes(x= as.character(ma_age), y = n))+
+  labs(x = "Age of Mother", y = "Number of Offspring", title = "Age of Mother and Number of Offspring")
+  
+ggplot(data = Pa.rrs.size)+
+  geom_boxplot(aes(x= as.character(pa_age), y = n))+
+  labs(x = "Age of Father", y = "Number of Offspring", title = "Age of Father and Number of Offspring")
+
+#means:
+summarise(Ma.rrs.size, mean(n))
+summarise(Pa.rrs.size, mean(n))
+
+Ma.rrs.size %>% group_by(ma_age) %>% summarise(mean(n))
+
+Pa.rrs.size %>% group_by(pa_age) %>% summarise(mean(n))
+```
+```{r}
+Ma.rrs.size %>% 
+  filter(!is.na(ma_age)) %>% 
+  ggplot()+
+  geom_bar(aes(x= n, y =..count.., fill = as.character(ma_age)), position = "dodge")+
+  scale_color_brewer(palette = "Dark2")+
+  scale_size_area()+
+  theme_classic()
+
+Ma.rrs.size %>% 
+  filter(!is.na(ma_age)) %>% 
+  ggplot()+
+  geom_bar(aes(x= n, y =..prop.., fill = as.character(ma_age)), position = "dodge")+
+  scale_color_brewer(palette = "Dark2")+
+  scale_size_area()+
+  theme_classic()+
+  labs(fill = "ma age", x = "number of offspring that return to spawn")
+  #facet_grid(~ma_hatchery)
+  
+
+Pa.rrs.size %>% 
+  filter(!is.na(pa_age)) %>% 
+  ggplot()+
+  geom_bar(aes(x= n, y =..count.., fill = as.character(pa_age)), position = "dodge")+
+  scale_color_brewer(palette = "Dark2")+
+  scale_size_area()+
+  theme_classic()
+
+Pa.rrs.size %>% 
+  filter(!is.na(pa_age)) %>% 
+  ggplot()+
+  geom_bar(aes(x= n, y =..prop.., fill = as.character(pa_age)), position = "dodge")+
+  scale_color_brewer(palette = "Dark2")+
+  scale_size_area()+
+  theme_classic()+
+  labs(fill = "pa age", x = "number of offspring that return to spawn")
+  #facet_wrap(~ma_hatchery)
+```
+
+```{r}
+wide_meta_good <- read_csv("RR_07-20_metadata.csv")
+wild.kid %>% count(kid_wild)
+
+wmg <- wide_meta_good %>%  rename(kid = NMFS_DNA_ID)
+
+wild_info <- left_join(wild.kid, wmg, by = "kid")
+
+wild_info %>% 
+  filter(kid_wild == "wild,hatchery")
+```
+
+# sibling-sibling regressions of spawn date
+for spawn day  of parent offspring, used  agematrix
+agematrix made by Ped_length_age
+```{r}
+#so i need to find siblings and compare their spawn dates to each other
+Ped_length_age %>% 
+  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
+  select(kid, ma, pa, ppair, everything()) %>% 
+  count(ppair) %>% 
+  arrange(desc(n))
+```
+
+```{r}
+Ped_length_age %>% 
+  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
+  filter(ppair == "M036463_M036461") %>% 
+  ggplot()+
+  geom_count(aes(x= kid_dayofyear, y = parent_dayofyear))
+
+
+wam <- Ped_length_age %>% 
+  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
+  filter(ppair == "M036463_M036461")
+
+wam$kid_dayofyear <- as.numeric(wam$kid_dayofyear)
+wam %>% summarise(mean(kid_dayofyear))
+
+wam %>% filter(kid_age == 2) %>% 
+  summarise(mean(kid_dayofyear))
+
+wam %>% filter(kid_age == 3) %>% 
+  summarise(mean(kid_dayofyear))
+
+```
+
+```{r}
+Ped_length_age %>% 
+  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
+  group_by(ppair, kid_age) %>% 
+  summarise(mean(as.numeric(kid_dayofyear))) %>% 
+  rename(mean = 'mean(as.numeric(kid_dayofyear))') %>% 
+  ggplot()+
+  geom_count(aes(x = kid_age, y = mean))
+```
+
+```{r}
+Ped_length_age %>% 
+  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
+  group_by(ppair) %>% 
+  mutate(kid_num = row_number()) %>% 
+  select(ppair, kid_dayofyear, kid_num) %>% 
+  pivot_wider(id_cols = ppair, names_from = kid_num, values_from = kid_dayofyear) %>%
+  rename(kid_1 = '1', kid_2 = '2') %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(kid_1), y = as.numeric(kid_2)))
+
+```
+
+##need to figure out a way to compare all siblings within a family to each other
+
+```{r}
+kid_day <- Ped_length_age %>% select(kid, kid_dayofyear)
+
+sib_combos3 <- Ped_length_age %>% 
+  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
+  slice_sample(prop = 1) %>% 
+  group_by(ppair, kid_age) %>% 
+  filter(n() != 1) %>% 
+  do(as_tibble(t(combn(.$kid, m = 2)))) %>% 
+  rename(sib_1 = V1, sib_2 = V2) %>% 
+  arrange(sib_1)
+
+sib_combos3 %>% filter(sib_1 == sib_2)
+
+sib_dates3 <- sib_combos3 %>% 
+  left_join(kid_day, by = c("sib_1" = "kid")) %>% 
+  rename("sib1_dayofyear" = kid_dayofyear) %>% 
+  left_join(kid_day, by = c("sib_2" = "kid")) %>% 
+  rename("sib2_dayofyear" = kid_dayofyear) 
+
+
+sib_sib <- sib_dates3 %>% 
+  filter(!is.na(sib1_dayofyear), !is.na(sib2_dayofyear)) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(sib1_dayofyear), y = as.numeric(sib2_dayofyear), color = as.character(kid_age)), position = position_jitter(1.5, 1.5))+ 
+  coord_fixed()+
+  theme_classic()+
+  scale_color_manual(values = c("#503143", "#79ad9f", "#9a532b"))+
+  geom_smooth(method = "lm", aes(x = as.numeric(sib1_dayofyear), y = as.numeric(sib2_dayofyear)), color = "#193439")
+sib_sib
+#success!the slice_sample command solved the problem -- it randomly selects rows
+
+write_csv(sib_dates3, "RR_steelhead_sibling_spawn_dates.csv")
+ggsave(plot = sib_sib, file = "RR_sib_sib.jpg", width = 10, height = 10)
+
+
+sib_dates3 %>% 
+  filter(!is.na(sib1_dayofyear), !is.na(sib2_dayofyear)) %>% 
+  lm(as.numeric(sib2_dayofyear) ~ as.numeric(sib1_dayofyear), .) %>% 
+  summary
+#slope 0.572691, std error 0.007666, p value < 2e-16, Multiple R-squared:  0.3271,	Adjusted R-squared:  0.3271
+
+
+```
+
+
+```{r}
+sib_combos_len <- Ped_length_age %>% 
+  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
+  slice_sample(prop = 1) %>% 
+  group_by(ppair, kid_age) %>% 
+  filter(n() != 1) %>% 
+  do(as_data_frame(t(combn(.$kid_length, m = 2)))) %>% 
+  rename(sib_1 = V1, sib_2 = V2) 
+
+sib_combos_len %>%
+  filter(!is.na(sib_1), !is.na(sib_2)) %>% 
+  ggplot()+
+  geom_count(aes(x = sib_1, y = sib_2, color = as.character(kid_age)))+
+  coord_fixed()+
+  theme_classic()+
+  geom_smooth(method = "lm", aes(x = as.numeric(sib_1), y = as.numeric(sib_2)), color = "#193439")+
+  scale_color_manual(values = c("#503143", "#79ad9f", "#9a532b"))+
+  facet_grid(kid_age~.)
+  
+```
+
+
+```{r}
+sib_combos_len_s <- Ped_length_age %>% 
+  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
+  slice_sample(prop = 1) %>% 
+  group_by(ppair, kid_age, new_kid_sex) %>% 
+  filter(n() != 1) %>% 
+  do(as_data_frame(t(combn(.$kid_length, m = 2)))) %>% 
+  rename(sib_1 = V1, sib_2 = V2) 
+
+sib_combos_len_s %>%
+  filter(!is.na(sib_1), !is.na(sib_2)) %>% 
+  ggplot()+
+  geom_count(aes(x = sib_1, y = sib_2, color = as.character(kid_age)))+
+  coord_fixed()+
+  theme_classic()+
+  geom_smooth(method = "lm", aes(x = as.numeric(sib_1), y = as.numeric(sib_2)), color = "#193439")+
+  scale_color_manual(values = c("#503143", "#79ad9f", "#9a532b"))+
+  facet_grid(kid_age~new_kid_sex)
+```
+
+
+```{r}
+sib_combos_age <- Ped_length_age %>% 
+  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
+  slice_sample(prop = 1) %>% 
+  group_by(ppair, new_kid_sex, kid_hatchery) %>% 
+  filter(n() != 1) %>% 
+  do(as_data_frame(t(combn(.$kid_age, m = 2)))) %>% 
+  rename(sib_1 = V1, sib_2 = V2) 
+
+sib_combos_age %>%
+  filter(!is.na(sib_1), !is.na(sib_2)) %>% 
+  ggplot()+
+  geom_count(aes(x = sib_1, y = sib_2))+
+  coord_fixed()+
+  theme_classic()+
+  geom_smooth(method = "lm", aes(x = as.numeric(sib_1), y = as.numeric(sib_2)), color = "#193439")+
+  scale_color_manual(values = c("#503143", "#79ad9f", "#9a532b"))+
+  facet_grid(kid_hatchery~new_kid_sex)
+
+sib_combos_age %>%
+  filter(!is.na(sib_1), !is.na(sib_2)) %>% 
+  ungroup() %>% 
+  group_by(sib_2) %>% 
+  ggplot()+
+  geom_bar(aes(x = sib_1, y = ..prop.., fill = as.character(sib_2)), position = "dodge")+
+  ylim(0,1.0)+
+  theme_classic()+
+  #geom_smooth(method = "lm", aes(x = as.numeric(sib_1), y = as.numeric(sib_2)), color = "#193439")+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b", "#c49b60", "#193439"))
+  #facet_grid(kid_hatchery~new_kid_sex)
+
+
+```
+
+```{r}
+
+sib_combos_age %>%
+  filter(!is.na(sib_1), !is.na(sib_2)) %>% 
+  filter(!is.na(new_kid_sex)) %>% 
+  ungroup() %>% 
+  group_by(sib_2) %>% 
+  ggplot()+
+  geom_bar(aes(x = sib_1, y = ..prop.., fill = as.character(sib_2)), position = "dodge")+
+  #ylim(0,1.0)+
+  theme_classic()+
+  #geom_smooth(method = "lm", aes(x = as.numeric(sib_1), y = as.numeric(sib_2)), color = "#193439")+
+  scale_fill_manual(values = c("#503143", "#79ad9f", "#9a532b", "#c49b60", "#193439"))+
+  facet_grid(kid_hatchery~new_kid_sex)
+```
+
+```{r}
+#i want to take a look at the number of offspring/ma that returned and were spawned graphed by spawn date
+
+#parent_dayofyear
+day_ma_n <- Ped_length_age %>% group_by(parent_dayofyear, ma ) %>% count() %>% rename(offspring = n)
+
+
+day_ma_n %>% 
+  ggplot()+
+  geom_hex(aes(x = as.numeric(parent_dayofyear), y = offspring))
+
+day_ma_n %>% 
+  ggplot()+
+  geom_point(aes(x = as.numeric(parent_dayofyear), y = offspring))
+
+
+day_ma_n %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = offspring))
+```
+
+
+how about an average number of offspring/ma returning on a given parent spawn date
+
+```{r}
+ave_offspirng <- day_ma_n %>% 
+  ungroup() %>% 
+  group_by(parent_dayofyear) %>% 
+  summarise(mean(offspring)) %>% 
+  rename(mean_offspring = "mean(offspring)")
+
+ave_offspirng %>% 
+  ggplot()+
+  geom_point(aes(x = as.numeric(parent_dayofyear), y = mean_offspring))
+  
+```
+
+how about by kid spawn date?
+```{r}
+#kid_dayofyear
+day_ma_n_2 <- Ped_length_age %>% group_by(kid_dayofyear, ma ) %>% count() %>% rename(offspring = n)
+
+
+day_ma_n_2 %>% 
+  filter(kid_dayofyear <300) %>% 
+  ggplot()+
+  geom_hex(aes(x = as.numeric(kid_dayofyear), y = offspring))
+
+day_ma_n_2 %>% 
+  filter(kid_dayofyear <300) %>% 
+  ggplot()+
+  geom_point(aes(x = as.numeric(kid_dayofyear), y = offspring))
+
+
+day_ma_n_2 %>% 
+  filter(kid_dayofyear <300) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(kid_dayofyear), y = offspring))
+
+```
+average with kid spawn date
+```{r}
+ave_offspirng_2 <- day_ma_n_2 %>% 
+  filter(kid_dayofyear <300) %>% 
+  ungroup() %>% 
+  group_by(kid_dayofyear) %>% 
+  summarise(mean(offspring)) %>% 
+  rename(mean_offspring = "mean(offspring)")
+
+ave_offspirng_2 %>% 
+  ggplot()+
+  geom_point(aes(x = as.numeric(kid_dayofyear), y = mean_offspring))
+```
+
+
+
+how about looking at offspring per parent pair instead of just per ma? 
+
+```{r}
+day_pair_n <- Ped_length_age %>% 
+  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
+  group_by(parent_dayofyear, ppair ) %>% 
+  count() %>% 
+  rename(offspring = n)
+  
+day_pair_n %>% 
+  ggplot()+
+  geom_hex(aes(x = as.numeric(parent_dayofyear), y = offspring))
+
+day_pair_n %>% 
+  ggplot()+
+  geom_point(aes(x = as.numeric(parent_dayofyear), y = offspring))
+
+
+day_pair_n %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(parent_dayofyear), y = offspring))
+
+
+#averages
+ave_offspirng_3 <- day_pair_n %>% 
+  ungroup() %>% 
+  group_by(parent_dayofyear) %>% 
+  summarise(mean(offspring)) %>% 
+  rename(mean_offspring = "mean(offspring)")
+
+ave_offspirng_3 %>% 
+  ggplot()+
+  geom_point(aes(x = as.numeric(parent_dayofyear), y = mean_offspring))
+
+```
+parent pair by kid spawn date:
+```{r}
+day_pair_n <- Ped_length_age %>% 
+  mutate(ppair = paste(ma, pa, sep = "_")) %>% 
+  group_by(kid_dayofyear, ppair ) %>% 
+  count() %>% 
+  rename(offspring = n)
+  
+day_pair_n %>% 
+  filter(kid_dayofyear <300) %>% 
+  ggplot()+
+  geom_hex(aes(x = as.numeric(kid_dayofyear), y = offspring))
+
+day_pair_n %>% 
+  filter(kid_dayofyear <300) %>% 
+  ggplot()+
+  geom_point(aes(x = as.numeric(kid_dayofyear), y = offspring))
+
+
+day_pair_n %>%
+  filter(kid_dayofyear <300) %>% 
+  ggplot()+
+  geom_count(aes(x = as.numeric(kid_dayofyear), y = offspring))
+
+
+#averages
+ave_offspirng_3 <- day_pair_n %>% 
+  filter(kid_dayofyear <300) %>% 
+  ungroup() %>% 
+  group_by(kid_dayofyear) %>% 
+  summarise(mean(offspring)) %>% 
+  rename(mean_offspring = "mean(offspring)")
+
+ave_offspirng_3 %>% 
+  ggplot()+
+  geom_point(aes(x = as.numeric(kid_dayofyear), y = mean_offspring))
+
+```
+
+
+## Looking at the inbreeding
+## How often do the ma and pa share one or more parents (how often are the parents half sibs/full sibs?)
+```{r}
+#want to join the data about maternal and paternal grandparents. this will work for all the trios in teh age matrix whwere i have parents (and ages) for all the kids and the ma and pa
+mat_gdparents <- Kid_Pa_Ma_Age %>% select(kid, ma, pa) %>% rename(ma = kid, maternal_grandma = ma, maternal_grandpa = pa)
+pat_gdparents <- Kid_Pa_Ma_Age %>% select(kid, ma, pa) %>% rename(pa = kid, paternal_grandma = ma, paternal_grandpa = pa)
+
+AgeMatrix %>% 
+  left_join(mat_gdparents, by = "ma") %>% 
+  left_join(pat_gdparents, by = "pa") %>% 
+  mutate(ma_pa_relationship = case_when(maternal_grandma == paternal_grandma ~ "half_sib",
+                                        maternal_grandpa == paternal_grandpa ~ "half_sib",
+                                        maternal_grandma == paternal_grandma & maternal_grandpa == paternal_grandpa ~ "full_sib")) %>% count(ma_pa_relationship)
+
+#48 half sibs that are ma and pa
+#if coding is correct, then no full sibs
+
+
+Kid_Pa_Ma_Age %>% 
+  left_join(mat_gdparents, by = "ma") %>% 
+  left_join(pat_gdparents, by = "pa") %>% 
+  mutate(ma_pa_relationship = case_when(maternal_grandma == paternal_grandma ~ "half_sib",
+                                        maternal_grandpa == paternal_grandpa ~ "half_sib",
+                                        maternal_grandma == paternal_grandma & maternal_grandpa == paternal_grandpa ~ "full_sib")) %>% count(ma_pa_relationship)
+```
+
+# rel repro success: across generations; natural origin vs hatchery origin
+```{r}
+Kid_Pa_Ma_Age_Pair
+wild.list2 <- wild.list %>% 
+  mutate(wild = case_when(kid_wild == "hatchery" ~ "hatchery",
+                                      kid_wild == "wild" ~ "wild", 
+                                      kid_wild == "wild,hatchery" ~ "hatchery")) %>% 
+  select(-kid_wild)
+
+wild_info <- Kid_Pa_Ma_Age_Pair %>% 
+  left_join(wild.list2, by = c("ma" = "kid")) %>% 
+  rename(ma_wild = wild) %>% 
+  left_join(wild.list2, by = c("pa" = "kid")) %>% 
+  rename(pa_wild = wild) %>% 
+  left_join(wild.list2, by = "kid") %>% 
+  rename(kid_wild = wild)
+
+wild_info %>% 
+  count(kid_wild) 
+
+not_wild <- wild_info %>% 
+  filter(kid_wild == "wild") %>% 
+  select(kid) %>% 
+  mutate(true_status = "not_wild")
+
+true_wild_info <- wild_info %>%
+  left_join(not_wild, by= c("ma" = "kid")) %>% 
+  rename(ma_status = true_status) %>% 
+  left_join(not_wild, by= c("pa" = "kid")) %>% 
+  rename(pa_status = true_status) %>% 
+  mutate(ma_true_wild = case_when(ma_status == "not_wild" ~ "hatchery", 
+                                  is.na(ma_status)  ~ paste(ma_wild))) %>%
+  mutate(pa_true_wild = case_when(pa_status == "not_wild" ~ "hatchery", 
+                                  is.na(pa_status)  ~ paste(pa_wild))) 
+  
+true_wild_info %>% 
+  filter(ma_true_wild == "wild", pa_true_wild == "wild") %>% 
+  count(pair)
+
+true_wild_info %>% 
+  filter(ma_true_wild == "wild", pa_true_wild == "wild") %>% 
+  count(pair) %>%
+  summarize(mean(n), sd(n), median(n))
+
+true_wild_info %>% 
+  filter(ma_true_wild == "hatchery", pa_true_wild == "hatchery") %>% 
+  count(pair)
+
+true_wild_info %>% 
+  filter(ma_true_wild == "hatchery", pa_true_wild == "hatchery") %>% 
+  count(pair) %>% 
+  summarize(mean(n), sd(n), median(n))
+
+
+true_wild_info %>% 
+  filter(ma_true_wild == "wild") %>% 
+  count(ma) %>% 
+  summarize(mean(n), sd(n), median(n))
+
+true_wild_info %>% 
+  filter(pa_true_wild == "wild") %>% 
+  count(pa) %>% 
+  summarize(mean(n), sd(n), median(n))
+
+true_wild_info %>% 
+  filter(ma_true_wild == "hatchery") %>% 
+  count(ma) %>% 
+  summarize(mean(n), sd(n), median(n))
+
+true_wild_info %>% 
+  filter(pa_true_wild == "hatchery") %>% 
+  count(pa) %>% 
+  summarize(mean(n), sd(n), median(n))
+```
+
+#relative reproductive success across generations
+```{r}
+ma_offspring_list <- Kid_Pa_Ma_Age_Pair %>% 
+  count(ma) %>% 
+  rename(ma_n_offspring = n)
+
+pa_offspring_list <- Kid_Pa_Ma_Age_Pair %>% 
+  count(pa) %>% 
+  rename(pa_n_offspring = n)
+
+pa_offspring_list %>%  count(pa_n_offspring)
+
+offspring_generations <- Kid_Pa_Ma_Age_Pair %>%
+  filter(!is.na(new_kid_sex), !is.na(new_ma_sex), !is.na(new_pa_sex)) %>% 
+  left_join(ma_offspring_list, by = c("kid" = "ma")) %>% 
+  rename(kid_offspring = ma_n_offspring) %>%
+  left_join(pa_offspring_list, by = c("kid" = "pa")) %>% 
+  rename(kid_offspring2 = pa_n_offspring) %>% 
+  unite(col = "kid_n_offspring", kid_offspring, kid_offspring2, na.rm = T) %>% 
+  left_join(ma_offspring_list, by = "ma") %>% 
+  left_join(pa_offspring_list, by = "pa") 
+
+offspring_generations %>% 
+  count(kid_n_offspring)
+```
+
+```{r}
+offspring_generations %>% 
+  filter(kid_year < 2018) %>%
+  filter(!is.na(kid_n_offspring)) %>% 
+  ggplot()+
+  geom_count(aes(x = ma_n_offspring, y = as.numeric(kid_n_offspring))) + 
+  geom_smooth(aes(x = ma_n_offspring, y = as.numeric(kid_n_offspring)), method = "lm")
+
+offspring_generations %>% 
+  filter(kid_year < 2018) %>% 
+  filter(!is.na(kid_n_offspring)) %>% 
+  lm(as.numeric(kid_n_offspring) ~ ma_n_offspring, data = .) %>% 
+  summary()
+
+offspring_generations %>% 
+  filter(kid_year < 2018) %>%
+  filter(!is.na(kid_n_offspring)) %>% 
+  ggplot()+
+  geom_count(aes(x = pa_n_offspring, y = as.numeric(kid_n_offspring))) + 
+  geom_smooth(aes(x = pa_n_offspring, y = as.numeric(kid_n_offspring)), method = "lm")
+
+offspring_generations %>% 
+  filter(kid_year < 2018) %>% 
+  filter(!is.na(kid_n_offspring)) %>% 
+  lm(as.numeric(kid_n_offspring) ~ pa_n_offspring, data = .) %>% 
+  summary()
+```
+
+```{r}
+#females
+offspring_generations %>% 
+  filter(kid_year < 2018) %>%
+  filter(!is.na(kid_n_offspring)) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  ggplot()+
+  geom_count(aes(x = ma_n_offspring, y = as.numeric(kid_n_offspring))) + 
+  geom_smooth(aes(x = ma_n_offspring, y = as.numeric(kid_n_offspring)), method = "lm")
+
+#males
+offspring_generations %>% 
+  filter(kid_year < 2018) %>%
+  filter(!is.na(kid_n_offspring)) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  ggplot()+
+  geom_count(aes(x = pa_n_offspring, y = as.numeric(kid_n_offspring))) + 
+  geom_smooth(aes(x = pa_n_offspring, y = as.numeric(kid_n_offspring)), method = "lm")
+```
+```{r}
+#females and age
+offspring_generations %>% 
+  filter(kid_year < 2018) %>%
+  filter(!is.na(kid_n_offspring)) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  filter(kid_age == ma_age) %>% 
+  ggplot()+
+  geom_count(aes(x = ma_n_offspring, y = as.numeric(kid_n_offspring), color = as.character(ma_age))) + 
+  geom_smooth(aes(x = ma_n_offspring, y = as.numeric(kid_n_offspring)), method = "lm")+
+  facet_grid(as.character(ma_age)~.)
+
+#male and age
+offspring_generations %>% 
+  filter(kid_year < 2018) %>%
+  filter(!is.na(kid_n_offspring)) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  filter(kid_age == pa_age) %>% 
+  ggplot()+
+  geom_count(aes(x = pa_n_offspring, y = as.numeric(kid_n_offspring), color = as.character(pa_age))) + 
+  geom_smooth(aes(x = pa_n_offspring, y = as.numeric(kid_n_offspring)), method = "lm")+
+  facet_grid(as.character(pa_age)~.)
+```
+
+```{r}
+#mothers and age
+offspring_generations %>% 
+  filter(kid_year < 2018) %>%
+  filter(!is.na(kid_n_offspring)) %>% 
+  filter(kid_age == ma_age) %>% 
+  ggplot()+
+  geom_count(aes(x = ma_n_offspring, y = as.numeric(kid_n_offspring), color = as.character(ma_age))) + 
+  geom_smooth(aes(x = ma_n_offspring, y = as.numeric(kid_n_offspring)), method = "lm")+
+  facet_grid(as.character(ma_age)~new_kid_sex)
+
+#fathers and age
+offspring_generations %>% 
+  filter(kid_year < 2018) %>%
+  filter(!is.na(kid_n_offspring)) %>% 
+  filter(kid_age == pa_age) %>% 
+  ggplot()+
+  geom_count(aes(x = pa_n_offspring, y = as.numeric(kid_n_offspring), color = as.character(pa_age))) + 
+  geom_smooth(aes(x = pa_n_offspring, y = as.numeric(kid_n_offspring)), method = "lm")+
+  facet_grid(as.character(pa_age)~new_kid_sex)
+
+```
+
+```{r}
+#mid parent age
+offspring_generations %>% 
+  filter(kid_year < 2018) %>%
+  filter(!is.na(kid_n_offspring)) %>% 
+  mutate(mid_age = ((pa_age + ma_age)/2)) %>% 
+  filter(kid_age == mid_age) %>% 
+  ggplot()+
+  geom_count(aes(x = ma_n_offspring, y = as.numeric(kid_n_offspring), color = as.character(mid_age))) + 
+  geom_smooth(aes(x = ma_n_offspring, y = as.numeric(kid_n_offspring)), method = "lm")+
+  facet_grid(as.character(mid_age)~new_kid_sex)
+
+offspring_generations %>% 
+  filter(kid_year < 2018) %>%
+  filter(!is.na(kid_n_offspring)) %>% 
+  mutate(mid_age = ((pa_age + ma_age)/2)) %>% 
+  filter(kid_age == mid_age) %>% 
+  ggplot()+
+  geom_count(aes(x = pa_n_offspring, y = as.numeric(kid_n_offspring), color = as.character(mid_age))) + 
+  geom_smooth(aes(x = pa_n_offspring, y = as.numeric(kid_n_offspring)), method = "lm")+
+  facet_grid(as.character(mid_age)~new_kid_sex)
+```
+
+
+```{r}
+Kid_Pa_Ma_Age_Pair %>% 
+  filter(SpawnYear <2018)
+  
+
+fish_list_age %>% 
+  filter(as.numeric(year) < 2018)%>% 
+  count(year)
+
+
+  
+```
+
+# can we estimate the selection differential by looking at change in mean over generations? 
+# in age at maturity
+```{r}
+#females
+Kid_Pa_Ma_Age_Pair %>% 
+  filter(SpawnYear < 2009) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  summarize(mean(kid_age))  #2.97411	
+
+gen_1_f <- Kid_Pa_Ma_Age_Pair %>% 
+  filter(SpawnYear < 2009) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  select(kid)
+
+Kid_Pa_Ma_Age_Pair %>% 
+  inner_join(gen_1_f, by =c("ma" = "kid")) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  summarize(mean(kid_age))  #2.982833	
+
+gen_2_f <- Kid_Pa_Ma_Age_Pair %>% 
+  inner_join(gen_1_f, by =c("ma" = "kid")) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  select(kid)
+
+Kid_Pa_Ma_Age_Pair %>% 
+  inner_join(gen_2_f, by =c("ma" = "kid")) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  summarize(mean(kid_age)) # 3.017544	
+
+gen_3_f <- Kid_Pa_Ma_Age_Pair %>% 
+  inner_join(gen_2_f, by =c("ma" = "kid")) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  select(kid)
+
+Kid_Pa_Ma_Age_Pair %>% 
+  inner_join(gen_3_f, by =c("ma" = "kid")) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  #count(SpawnYear)
+  summarize(mean(kid_age)) #  2.958824	
+
+gen_4_f <- Kid_Pa_Ma_Age_Pair %>% 
+  inner_join(gen_3_f, by =c("ma" = "kid")) %>% 
+  filter(new_kid_sex == "Female") %>% 
+  select(kid)
+
+```
+
+
+# males
+```{r}
+Kid_Pa_Ma_Age_Pair %>% 
+  filter(SpawnYear < 2009) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  summarize(mean(kid_age))  #	2.510885
+
+gen_1_m <- Kid_Pa_Ma_Age_Pair %>% 
+  filter(SpawnYear < 2009) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  select(kid)
+
+Kid_Pa_Ma_Age_Pair %>% 
+  inner_join(gen_1_m, by =c("pa" = "kid")) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  summarize(mean(kid_age))  #2.600656
+
+gen_2_m <- Kid_Pa_Ma_Age_Pair %>% 
+  inner_join(gen_1_m, by =c("pa" = "kid")) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  select(kid)
+
+Kid_Pa_Ma_Age_Pair %>% 
+  inner_join(gen_2_m, by =c("pa" = "kid")) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  summarize(mean(kid_age)) # 	2.667814
+
+gen_3_m <- Kid_Pa_Ma_Age_Pair %>% 
+  inner_join(gen_2_m, by =c("pa" = "kid")) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  select(kid)
+
+Kid_Pa_Ma_Age_Pair %>% 
+  inner_join(gen_3_m, by =c("pa" = "kid")) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  #count(SpawnYear)
+  summarize(mean(kid_age)) #  2.534221		
+
+gen_4_f <- Kid_Pa_Ma_Age_Pair %>% 
+  inner_join(gen_3_m, by =c("pa" = "kid")) %>% 
+  filter(new_kid_sex == "Male") %>% 
+  select(kid)
+```
+
+

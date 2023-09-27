@@ -1,0 +1,1440 @@
+---
+title: "Removing problematice loci and re-running HatcheryPedAgree, Notebook 3"
+output: html_notebook
+---
+
+Removing 7 SNPs that resulting in Mendelian incompatibilites in 2% or more of the parent-offspring trios produced by SNPPIT. 
+
+Remove: 
+  * SH109243-222
+  * OMY_PEPA-INT6
+  * SH128851-273
+  * SH120950-569
+  * SH110201-359
+  * SH131965-120
+  * SH97954-618
+  
+```{r}
+library(tidyverse)
+library(HatcheryPedAgree)
+```
+
+  
+Only the genotype info is changing, the metadate file stays the same
+```{r}
+wide_genos_good <- read_csv("RR_07-20_genotypes.csv")
+wide_genos_rm7 <- wide_genos_good %>% select(-starts_with("SH109243-222"), -starts_with("OMY_PEPA-INT6"), -starts_with("SH128851-273"), -starts_with("SH120950-569"), -starts_with("SH110201-359"), -starts_with("SH131965-120"), -starts_with("SH97954-618"))
+write_csv(wide_genos_rm7, "RR_2007-2020_wide_genos_rm7_before_msa.csv")
+
+geno_rm7 <- wide_genos_rm7 %>% 
+  gather(key = "locus", value = "allele_int", -NMFS_DNA_ID) %>% 
+  mutate(locus = str_replace(locus, "_1$", "")) %>% 
+  group_by(NMFS_DNA_ID, locus) %>% 
+  mutate(gene_copy = 1:2) %>% 
+  ungroup() %>% 
+  mutate(allele_int = as.integer(allele_int)) %>% 
+  rename(indiv = NMFS_DNA_ID)
+
+write_rds(geno_rm7, "RR_steelhead_2007-2020_geno_rm7.rds", compress = "xz")
+```
+
+```{r}
+rrsh_genotypes_rm7 <- geno_rm7
+rrsh_metadata <- read_rds("RR_steelhead_2007-2020_meta.rds")
+
+```
+
+```{r}
+rrsh_genotypes_rm7 %>% arrange(allele_int) # so I need to change the 0 to NA
+
+library(naniar)
+
+genos_na_rm7 <- rrsh_genotypes_rm7 %>% replace_with_na(replace = list(allele_int = 0))
+
+genos_na_rm7 %>% arrange(allele_int) #zeros are gone
+genos_na_rm7 %>% filter(is.na(allele_int)) #na replaced zeros
+```
+
+```{r}
+miss_dsn <- genos_na_rm7 %>%
+  group_by(indiv) %>%
+  summarise(
+    num_all_loci = n() / 2,  # double check to make sure each gene copy is explicitly listed as NA
+    num_non_miss_loci = sum(!is.na(allele_int)) / 2)
+
+count(miss_dsn, num_all_loci)  # good.  Everyone has 87 loci
+
+full_histo <- ggplot(miss_dsn, aes(x = num_non_miss_loci)) +
+  geom_histogram(binwidth = 1)
+full_histo
+```
+  
+```{r}
+#missing datat for rubias is "NA"
+# first time through, just get the distribution of matching proportions
+for_histo_rm7 <- find_matching_samples(genos_na_rm7, min_frac_matching = 0.8, return_clusters = TRUE)
+#0.57% of allelic data identified as missing
+
+for_histo_rm7$pairs
+for_histo_rm7$clusters 
+for_histo_rm7$aliases
+
+# check the distribution
+matching_data_rm7 <- for_histo_rm7$pairs %>%
+  mutate(frac_match = num_match / num_non_miss)
+
+ggplot(data = matching_data_rm7, aes(x = frac_match)) +
+  geom_histogram(binwidth = 0.005)+
+  scale_x_continuous(breaks = seq(0.80,1.0,0.01))+
+  theme(axis.text.x = element_text(angle = 45,  hjust=1))
+
+matching_data_rm7 
+
+```
+  
+Now I want to attach some meta data for indiv_1 and indiv_2 to the matching sample analyses to check the output
+```{r}
+rrsh_metadata
+matching_data_rm7
+
+ind_one <- rrsh_metadata %>% 
+  setNames(paste0("indiv_1_", names(.))) %>% 
+  rename(indiv_1 = indiv_1_indiv)
+ind_two <- rrsh_metadata %>% 
+  setNames(paste0("indiv_2_", names(.))) %>% 
+  rename(indiv_2 = indiv_2_indiv)
+
+match_data_meta_rm7 <- matching_data_rm7 %>% 
+  left_join(ind_one, by = "indiv_1") %>% 
+  left_join(ind_two, by = "indiv_2")
+
+match_data_meta_rm7
+```  
+  
+```{r}
+# get the clusters of matching genotypes each indvidual belongs to
+for_real_rm7 <- find_matching_samples(genos_na_rm7, min_frac_matching = 0.94, return_clusters = TRUE)
+# we will end up using the identified clusters
+for_real_rm7$clusters %>% arrange(desc(cluster)) #520 clusters
+names(for_real_rm7)
+for_real_rm7$pairs
+for_real_rm7$aliases
+
+```  
+
+```{r}
+#Need to make sure the spawner_group column is set to "date" and not "Character"  
+rrsh_metadata$spawner_group <-  format(rrsh_metadata$spawner_group, "%m/%d/%y")
+#need to get date with slashes instead of dashes
+
+reorg_rm7 <- reorganize_matching_samples(genotypes = genos_na_rm7, metadata = rrsh_metadata , clusters = for_real_rm7$clusters)
+#Some matching genotypes found in different hatcheries. See cross_hatchery_matches in output.
+#Some matching genotypes found to have different sexes. See cross_sex_matches in output.
+#Rendered 8 genotypes NA because of mismatching homozygotes in the matching samples analysis  
+  ###still have the 8 homoz switches at SH116733-349
+
+names(reorg_rm7)
+reorg_rm7$matchers_metadata
+reorg_rm7$cross_hatchery_matches 
+reorg_rm7$cross_sex_matches 
+reorg_rm7$geno_discord
+
+reorg_rm7$snppit_meta
+reorg_rm7$snppit_genos  
+
+write_csv(reorg_rm7$cross_sex_matches, "RR_cross_sex_matches_rm7.csv") ###might be problem 
+write_csv(reorg_rm7$matchers_metadata, "RR_matchers_metadata_rm7.csv")
+```  
+ 
+
+ 
+ 
+```{r, eval = FALSE}  
+snppit_sad_rm7 <- run_snppit(reorg_rm7$snppit_genos, reorg_rm7$snppit_meta)
+snppit_sad_rm7  
+results_sad_rm7 <- slurp_snppit(snppit_sad_rm7, reorg_rm7$snppit_meta) 
+
+write_rds(results_sad_rm7, path = "../outputs/RR_SAD_results_rm7.rds", compress = "xz")
+```
+
+```{r}
+results_sad_rm7 <- slurp_snppit("snppit_results/sad/", reorg_rm7$snppit_meta) 
+results_sad_rm7
+```
+
+```{r, eval= FALSE}
+snppit_noSAD_rm7 <- run_snppit(
+  reorg_rm7$snppit_genos, 
+  reorg_rm7$snppit_meta, 
+  use_spawner_group = FALSE,
+  use_sex = FALSE
+  )
+results_no_sad_rm7 <- slurp_snppit(snppit_noSAD_rm7, reorg_rm7$snppit_meta)
+write_rds(results_no_sad_rm7, path = "../outputs/RR_no_SAD_results_rm7.rds", compress = "xz") 
+```
+
+```{r}
+results_no_sad_rm7 <- slurp_snppit("snppit_results/no_sad/", reorg_rm7$snppit_meta)
+results_no_sad_rm7
+```  
+
+```{r}
+results_sad_rm7 %>% filter(MaxP.Pr.Relat == "C_Se_Se", FDR <= 0.01) #13294
+results_no_sad_rm7 %>% filter(MaxP.Pr.Relat == "C_Se_Se", FDR <= 0.01) #12582
+```
+```{r}
+results_sad_rm7 %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se") %>% 
+  arrange(FDR) %>% 
+  mutate(idx = 1:n()) %>% 
+  ggplot(., aes(x= idx, y = FDR))+
+  geom_point()
+  
+MI.info <- results_sad_rm7 %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se", FDR <= 0.01) %>% 
+  mutate(MI_list = str_split(MendIncLoci, ",")) %>% 
+  arrange(desc(MI.Trio))
+
+MI.info %>%   
+  count(MendIncLoci) %>% 
+  arrange(desc(n))  %>% 
+  ggplot()+ 
+  geom_histogram(aes(x = n), binwidth = 1)+
+  xlim(0,400)
+
+trios_sep <- separate_rows(MI.info, MendIncLoci, sep=",")
+trios_count <- trios_sep %>%
+ group_by(MendIncLoci) %>%
+ count()
+MI.info %>% tally()
+#13294 
+trios_count <- trios_count %>%
+ ungroup() %>%
+ mutate(total = 13294)
+trios_count <- trios_count %>%
+ mutate(frequency = (n/total),
+        percent = ((n/total)*100))
+trios_count %>% arrange(desc(percent))
+
+trios_count %>% 
+  filter(!is.na(MendIncLoci)) %>% 
+  ggplot() +
+  geom_histogram(aes(x = n), binwidth = 1)
+```  
+```{r}
+results_no_sad_rm7 %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se") %>% 
+  arrange(FDR) %>% 
+  mutate(idx = 1:n()) %>% 
+  ggplot(., aes(x= idx, y = FDR))+
+  geom_point()
+  
+MI.info <- results_no_sad_rm7 %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se", FDR <= 0.01) %>% 
+  mutate(MI_list = str_split(MendIncLoci, ",")) %>% 
+  arrange(desc(MI.Trio))
+
+MI.info %>%   
+  count(MendIncLoci) %>% 
+  arrange(desc(n))  %>% 
+  ggplot()+ 
+  geom_histogram(aes(x = n), binwidth = 1)+
+  xlim(0,400)
+
+trios_sep <- separate_rows(MI.info, MendIncLoci, sep=",")
+trios_count <- trios_sep %>%
+ group_by(MendIncLoci) %>%
+ count()
+MI.info %>% tally()
+#12582
+trios_count <- trios_count %>%
+ ungroup() %>%
+ mutate(total = 12582)
+trios_count <- trios_count %>%
+ mutate(frequency = (n/total),
+        percent = ((n/total)*100))
+trios_count %>% arrange(desc(percent))
+
+trios_count %>% 
+  filter(!is.na(MendIncLoci)) %>% 
+  ggplot() +
+  geom_histogram(aes(x = n), binwidth = 1)
+```
+
+
+The results look good and the number of trios that meet the filters has gone up after removing the 7
+problematic loci
+Next steps: reformat_no_sex_or_date_results
+Then: prep_to_compre_snppit_runs
+And Then: Compare them
+```{r}
+#reformate the no_sad (unconstrained) snppit results
+
+reformat_no_sad_rm7 <- reformat_no_sex_or_date_results(results_no_sad_rm7)
+#Error: Column `kid_year` can't be converted from character to numeric
+
+D <- results_no_sad_rm7
+```
+
+```{r}
+  # create a column that has the index for each trio
+  D2 <- D %>%
+    ungroup() %>%
+    mutate(trio_index = 1:n()) %>%
+    select(trio_index, everything())
+
+  # first break D into reported trios and non-reported trios
+  trios <- D2 %>%
+    filter(!is.na(ma) & !is.na(pa))
+
+  NA_trios <- D2 %>%
+    filter(is.na(ma) | is.na(pa))
+    
+
+  # now, we break trios into the "active" columns (which we are going to be changing)
+  # and the "inactive" ones, which we will join back on via the trio index later.
+  t_active <- trios %>%
+    select(trio_index:ma_hatchery) %>%
+    rename(
+      kid_id = kid,
+      pa_id = pa,
+      ma_id = ma
+    ) %>%
+    mutate(
+      kid_year = as.character(kid_year),
+      ma_year = as.character(ma_year),
+      pa_year = as.character(pa_year)
+    )
+  t_inactive <- trios %>%
+    select(-(kid:ma_hatchery))
+
+  # now, we do some pivot operations so that each trio is stored as three
+  # rows in order: kid, ma, pa; and the sex, year, spawner group, and hatchery of
+  # each member of the trio is in a separate column.
+  # Perhaps there is a way to do this as a single pivot_longer, but I
+  # ended up doing a pivot_longer followed by a pivot wider
+  ta2 <- t_active %>%
+    pivot_longer(
+      cols = -c(trio_index, SpawnYear),
+      names_to = c("member", "variable"),
+      names_sep = "_"
+    ) %>%
+    pivot_wider(
+      names_from = variable,
+      values_from = value
+    ) %>%
+    arrange(trio_index, member)
+
+  # now, if we group by trio index, we have three rows: kid, ma, pa.  And now
+  # we look at the sex column to see if the ma and pa labels need to be reassigned.
+  ta3 <- ta2 %>%
+    group_by(trio_index) %>%
+    mutate(
+      member = {
+        ret <- c("kid", "ma", "pa")
+        if ( (!is.na(sex[2]) && !is.na(sex[3])) &&    # if both are not NA and sexes are reversed
+             (sex[2] == "Male" && sex[3] == "Female")
+        ) {
+          ret <- c("kid", "pa", "ma")
+        } else if (!is.na(sex[3]) && sex[3] == "Female" && is.na(sex[2])) {  # if pa's sex is not NA and Female, and ma's sex is NA,
+          ret <- c("kid", "pa", "ma")
+        } else if (!is.na(sex[2]) && sex[2] == "Male" && is.na(sex[3])) {  # if ma's sex is not NA and Male, and pa's sex is NA
+          ret <- c("kid", "pa", "ma")
+        }
+
+        ret
+      }
+    ) %>%
+    ungroup()
+
+  # now, we pivot this wider
+  ta4 <- ta3 %>%
+    pivot_wider(
+      names_from = member,
+      values_from = id:hatchery,
+      names_sep = "_"
+    )
+
+  # and deal with the names.  This is a bit ugly and will break
+  # when there are more extra columns in the front there...
+  tmpmat <- names(ta4)[-(1:2)] %>%
+    str_split_fixed(., "_", 2)
+  names(ta4)[-(1:2)] <- paste(tmpmat[, 2], tmpmat[, 1], sep = "_")
+
+  # rename a few things and join the inactive columns back on there
+  ta_done <- ta4 %>%
+    rename(
+      kid = kid_id,
+      pa = pa_id,
+      ma = ma_id
+    ) %>%
+    select(trio_index, kid, pa, ma, everything()) %>%
+    left_join(t_inactive, by = "trio_index")
+
+  # then return those along with the NA columns
+reformat_no_sad_rm7 <- bind_rows(
+    NA_trios,
+    ta_done
+  ) %>%
+    arrange(trio_index) %>%
+    select(-trio_index)
+reformat_no_sad_rm7
+```
+Now prep_to_compare_snippit_runs with reformat_no_sad_rm7 and results_sad_rm7
+```{r}
+reformat_no_sad_rm7; results_sad_rm7
+L <- list(
+    run1_withSAD = results_sad_rm7,
+    run2_noSAD = reformat_no_sad_rm7
+)
+
+```
+```{r}
+type_levels = names(L)
+
+  # get the number of the types of analyses
+  num_types <- length(type_levels)
+
+  # combine the list into a single tibble
+  D <- bind_rows(L, .id = "type_of_analysis")
+
+  
+  D$type_f = factor(D$type_of_analysis, levels = type_levels)
+
+  # now, we need to fill in values for the FDR (and p-value) for sorting these
+  # things along the x-axis.  Namely we need the values for the "base" case (type_f = 1),
+  # if those were NA. I will fill those with the average of the remaining values.
+  # We also need to get the kid's spawn year in there for facetting.
+  D2 <- D %>%
+    arrange(kid_hatchery, kid, type_f) %>%
+    group_by(kid_hatchery, kid) %>%
+    mutate(
+      FDR_comp = ifelse(is.na(FDR), mean(FDR, na.rm = TRUE), FDR),
+      Pvalue_comp = ifelse(is.na(Pvalue), mean(Pvalue, na.rm = TRUE), Pvalue)
+    ) %>%
+    mutate(FDR_comp1 = FDR_comp[1],  # these are the "composite" scores
+           Pvalue_comp1 = Pvalue_comp[1]) %>%
+    arrange(FDR_comp1, Pvalue_comp1, kid) %>%
+    ungroup() %>%
+    mutate(idx_all_aggregated = as.integer(factor(kid, levels = unique(kid)))) %>%
+    mutate(
+      kid_min_year = map_int(
+        str_split(kid_year, ","),
+        .f = function(x) min(as.integer(x))
+        ))
+
+
+
+  # Now, give each one an index based on the year that they are in, and also
+  # on the year and the hatchery that they are in
+  D3 <- D2 %>%
+    group_by(kid_min_year) %>%
+    mutate(idx_by_year = as.integer(factor(kid, levels = unique(kid)))) %>%
+    group_by(kid_hatchery, kid_min_year) %>%
+    mutate(idx_by_year_and_hatchery = as.integer(factor(kid, levels = unique(kid)))) %>%
+    ungroup() %>%
+    select(starts_with("idx"), everything())
+
+
+D3
+
+  ### Made it to here so far, and just testing
+  g <- ggplot(D3 %>% filter(!is.na(kid_hatchery)), aes(x = idx_by_year_and_hatchery, y = FDR + 0.05 * (as.integer(type_f) - 1), colour = type_f)) +
+    geom_hline(yintercept = 0.05, colour = "white") +
+    geom_point(shape = 21, stroke = 0.2, size = 1.2) +
+    facet_grid(kid_min_year ~ kid_hatchery) +
+    scale_color_manual(values = c("blue", "red"))
+g
+  
+ 
+
+  # now, we want to pick out those indivs that are not assigned to the same
+  # parents as the base case (type_f == 1) when both of them are non-missing
+  base_casers <- D3 %>%
+    select(type_f, kid, pa, ma) %>%
+    rename(base_pa = pa,
+           base_ma = ma) %>%
+    filter(as.integer(type_f) == 1) %>%
+    select(-type_f)
+
+  D3_plus <- D3 %>%
+    left_join(base_casers, by = "kid")
+
+  # finally, we want to get some things to make colors
+  D4 <- D3_plus %>%
+    mutate(
+      parent_compatibility = case_when(
+        (!is.na(ma) & !is.na(pa) & !is.na(base_pa) & !is.na(base_ma)) & !((ma == base_ma & pa == base_pa) | (pa == base_ma & ma == base_pa)) ~ "ma_pa_not_matching_base_case",
+        is.na(ma_sg) | is.na(pa_sg)       ~ "date_not_recorded",
+        is.na(ma_sex)  | is.na(pa_sex)        ~ "sex_not_recorded",
+        pa_sex == ma_sex & pa_sg != ma_sg ~ "sex_and_date_mismatch",
+        pa_sex == ma_sex                      ~ "sex_mismatch",
+        pa_sg != ma_sg                    ~ "date_mismatch",
+        TRUE                                  ~ "pair_compatible"
+      ),
+      trio_type_group = case_when(
+        MaxP.Pr.Relat == "C_Se_Se"  ~ "C_Se_Se",
+        is.na(MaxP.Pr.Relat)      ~ NA_character_,
+        TRUE                      ~ "NOT C_Se_Se"
+      )
+    )
+D4
+sad_nosad_comparison <-   D4 %>% 
+  mutate(
+      kid_year = as.numeric(kid_year),
+      ma_year = as.numeric(ma_year),
+      pa_year = as.numeric(pa_year)
+    ) %>% 
+  mutate(kid_age = kid_year - SpawnYear)
+sad_nosad_comparison
+```
+```{r}
+sad_nosad_comparison
+unique(sad_nosad_comparison$parent_compatibility)
+
+sad_nosad_comparison %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se", FDR <= 0.01) %>% 
+  count(parent_compatibility)
+
+sad_nosad_comparison %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se", FDR <= 0.01) %>% 
+  filter(parent_compatibility == "ma_pa_not_matching_base_case")
+
+sad_nosad_comparison %>% count(kid_age)
+
+sad_nosad_comparison %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se", FDR <= 0.01) %>% 
+  count(kid_age)
+
+sad_nosad_comparison %>% 
+  filter(kid == "M109056")
+```
+
+Steps to form another useful comparison file of SNPPIT constrained and unconstrained data outputs:
+
+Next, I need to comnpare the constrained and unconstrained results 
+I need to use the total data set (uAll and conAll) to do the comparison so the two files have the same amount of rows. 
+First, arrange the two data sets in order by Kid name
+Second, compare the two data sets by the new column made that has string of "Kid_Ma_Pa"
+
+```{r}
+reformat_no_sad_rm7; results_sad_rm7
+library(tidyverse)
+conAll.edit <- results_sad_rm7 %>% mutate(Kid_Ma_Pa = stringr::str_c(kid,ma,pa, sep = "_"))
+uAll.edit <- reformat_no_sad_rm7 %>% mutate(Kid_Ma_Pa = stringr::str_c(kid,ma,pa, sep = "_")) %>% mutate(Kid_Pa_Ma= stringr::str_c(kid,pa,ma, sep = "_"))
+
+conAll.edit <- arrange(conAll.edit, kid)
+uAll.edit <-  arrange(uAll.edit, kid)
+
+conAll.edit
+uAll.edit
+
+RRdiff <- conAll.edit %>% mutate(Compare = ifelse(((conAll.edit$Kid_Ma_Pa == uAll.edit$Kid_Pa_Ma) | (conAll.edit$Kid_Ma_Pa == uAll.edit$Kid_Ma_Pa)), yes = "Same", no = "Different"))
+
+```
+
+Step 3: Filter the results for the C_Se_Se trios and FDR <= 0.01
+First I'll make a file filtered by strong trios in the constrained data: 
+
+
+```{r}
+diff_un_rename <- rename_at(uAll.edit, vars(-kid), function(x) paste0(x,"_unconstrained"))
+diff_un_rename
+comparison <- inner_join(RRdiff, diff_un_rename, "kid")
+comparison
+
+#Now I will filter the comparison file for strong trios in either data set
+
+comp_filter <- comparison %>% filter(MaxP.Pr.Relat == "C_Se_Se" & FDR <= 0.01 | MaxP.Pr.Relat_unconstrained == "C_Se_Se" & FDR_unconstrained <= 0.01)
+
+#Going to try and automate a way to find the issues with the differences between the constrained and unconstrained results
+
+comp_filter
+#13532
+
+i <-  1:13532 #number of samples in comp_filter
+comp_2 <- comp_filter %>% mutate(Un_Same_Sex = ifelse(pa_sex_unconstrained[i] == ma_sex_unconstrained[i], yes = "Same Sex Parents", no ="NA"))
+comp_2
+library(lubridate)
+comp_3a <- comp_2 %>% mutate(PaUn_Date = mdy(pa_sg_unconstrained)) %>% mutate(MaUn_Date = mdy(ma_sg_unconstrained))
+comp_3a                                                                
+comp_3b <- comp_3a %>% mutate(Un_Diff_Spawn_Date = ifelse(PaUn_Date[i] != MaUn_Date[i], yes = "Different Spawn Dates", no = "Same"))
+comp_3b
+comp_4 <- comp_3b %>% mutate(Un_Diff_Hatchery = ifelse(pa_hatchery_unconstrained[i] != ma_hatchery_unconstrained[i], yes = "Parents from Different Hatcheries", no = "Same Hatchery"))
+comp_5 <- comp_4 %>% mutate(Un_Diff_SpawnYear = ifelse(pa_year_unconstrained[i] != ma_year_unconstrained[i], yes = "Different Spawn Years", no = "Same Spawn Year"))
+comp_5
+
+```
+```{r}
+comp_5 %>% filter(Compare == "Different"| is.na(Compare)) 
+#268 
+
+comp_5 %>% filter(is.na(Compare)) 
+#196 
+
+comp_5 %>% filter(Compare == "Different") %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se", FDR <= 0.01) %>% 
+  filter(ma == ma_unconstrained | pa == pa_unconstrained | ma == pa_unconstrained | pa == ma_unconstrained)
+#at least one parent shared between the two parent pair assignments
+#29 
+```
+
+Going to try running snppit without any hatchery info with noSAD -- more fully unconstrained
+```{r}
+#I can't run this within the function "run_snppit", I will need to run the code here...
+
+G <- reorg_rm7$snppit_genos
+S <- reorg_rm7$snppit_meta
+use_spawner_group  <-  FALSE
+use_sex  <-  FALSE
+min_age <- 1
+max_age  <-  6
+geno_err  <-  0.005
+outf  <-  tempfile()
+
+  # these will get changed if we don't use them
+  sex_col <- "POPCOLUMN_SEX"
+  spawn_group_col <- "POPCOLUMN_SPAWN_GROUP"
+
+
+  # first, make a genotype matrix. Put spaces between the gene copies in a locus
+  M <- G %>%
+    select(indiv, locus, gene_copy, allele_int) %>%
+    mutate(allele_int = ifelse(is.na(allele_int), 0, allele_int)) %>%
+    spread(key = gene_copy, value = allele_int) %>%
+    unite(col = "geno", `1`, `2`, sep = " ") %>%
+    spread(key = locus, value = geno)
+
+  # get the marker names
+  SNP_names <- colnames(M)[-1]
+
+  # prep the sex and spawn date data, and also deal with years, which could
+  # be a character string.
+  meta <- S %>%
+    mutate(
+      sex = recode(sex, Female = "F", Male = "M"),
+      sex = ifelse(is.na(sex), "?", sex),
+    ) %>%
+    arrange(year, spawner_group) %>%
+    select(hatchery, indiv, sex, year, spawner_group) %>%
+    mutate(
+      years_list = str_split(year, ","),
+      min_year = map_int(years_list, function(x) min(as.integer(x))),
+      max_year = map_int(years_list, function(x) max(as.integer(x)))
+      )
+
+  # make sure genotype data are available for all the individuals in the metadata
+  these_have_no_genos <- meta %>%
+    anti_join(M, by = "indiv")
+  if (nrow(these_have_no_genos) > 0) {
+    stop(
+      "Error.  S in prepare_snppit_file is requesting addition of fish with no genotypes in G: ",
+      paste(these_have_no_genos$indiv, collapse = ", ")
+    )
+  }
+
+  # break the genos into candidate parents and offspring.
+  # Basically if your latest spawn year is less than the min year + the
+  # min age, then you don't get to be an offspring.  Likewise, if
+  # your earliest spawn year is greater than max year - min age, you don't get
+  # to be a candidate parent
+  Offs <- meta %>%
+    filter(max_year >= min(min_year) + min_age) %>%
+    select(-sex, -spawner_group) %>%
+    mutate(age_range = str_c(min_age, "-", max_age)) %>%
+    left_join(., M, by = "indiv")
+
+  Pars <- meta %>%
+    filter(min_year <= max(max_year) - min_age) %>%
+    left_join(., M, by = "indiv")
+
+
+  if (use_sex == FALSE) {
+    sex_col <- ""
+    Pars <- Pars %>% select(-sex)
+  }
+  if (use_spawner_group == FALSE) {
+    spawn_group_col <- ""
+    Pars <- Pars %>% select(-spawner_group)
+  }
+
+
+  # now assemble the text ouput
+  preamble <- glue::glue("
+    NUMLOCI {length(SNP_names)}
+    MISSING_ALLELE 0
+    {sex_col}
+    POPCOLUMN_REPRO_YEARS
+    {spawn_group_col}
+    OFFSPRINGCOLUMN_SAMPLE_YEAR
+    OFFSPRINGCOLUMN_AGE_AT_SAMPLING\n
+    ")
+
+  cat(preamble, file = outf)
+  write.table(
+    cbind(SNP_names, geno_err),
+    row.names = FALSE,
+    col.names = FALSE,
+    quote = FALSE,
+    file = outf,
+    append = TRUE
+  )
+
+  # cycle over the different hatcheries that might be involved
+  # and put in a block of parents for each
+  
+  dump <-
+    write.table(select(Pars, -hatchery, -years_list, -min_year, -max_year),
+      row.names = FALSE,
+      col.names = FALSE,
+      quote = FALSE,
+      file = outf, append = TRUE, sep = "\t"
+    )
+  
+
+
+
+  # then do the same thing for offspring from the different hatcheries.  And,
+  # for now, assume that the offspring could have come from any of the hatcheries
+  # (hence the ? after the Offspring name)
+  dump <- lapply(split(Offs, Offs$hatchery), function(x) {
+    cat("OFFSPRING Offspring-", x$hatchery[1], " ?\n", file = outf, append = TRUE, sep = "")
+    write.table(select(x, -hatchery, -years_list, -min_year, -max_year),
+      row.names = FALSE,
+      col.names = FALSE,
+      quote = FALSE,
+      file = outf, append = TRUE, sep = "\t"
+    )
+  })
+
+  # message to user
+  #message("snppit input file written to ", outf)
+
+##IMPORTANT: Then I opend the file and added "POP Parents" before the list of parents, just after the list of loci
+  
+  outf
+  
+```  
+Now we need to run snppit with this new file I made...
+```{r, eval = FALSE}
+  additional_args <-  ""
+
+  outdir <-  tempfile()
+
+  dir.create(outdir, recursive = TRUE)
+
+  outf <- file.path(outdir, "snppit_input.txt")
+
+  snppit_path <- system.file("bin/snppit-Darwin", package = "HatcheryPedAgree")
+
+  call <- paste(
+    "cd", outdir, ";",
+    snppit_path, "-f", "/var/folders/mc/dg9t08s57ns7sqrqxr5g3mb80000gn/T//Rtmpi5BiBN/file5cd3729477c", additional_args
+    )
+
+  system(call)
+
+outdir
+
+results_no_sad_rm7_nohatch <- slurp_snppit(outdir, reorg_rm7$snppit_meta)
+write_rds(results_no_sad_rm7_nohatch, path = "../outputs/RR_no_SAD_results_rm7_nohatch.rds", compress = "xz") 
+```
+
+
+```{r}
+results_no_sad_rm7_nohatch <- slurp_snppit("snppit_results/no_sad_no_hatch/", reorg_rm7$snppit_meta) 
+
+results_no_sad_rm7_nohatch
+```
+Next, look at number of MI in the noSADnoHatch results
+```{r}
+results_no_sad_rm7_nohatch %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se") %>% 
+  arrange(FDR) %>% 
+  mutate(idx = 1:n()) %>% 
+  ggplot(., aes(x= idx, y = FDR))+
+  geom_point()
+  
+MI.info <- results_no_sad_rm7_nohatch %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se", FDR <= 0.01) %>% 
+  mutate(MI_list = str_split(MendIncLoci, ",")) %>% 
+  arrange(desc(MI.Trio))
+
+MI.info %>%   
+  count(MendIncLoci) %>% 
+  arrange(desc(n))  %>% 
+  ggplot()+ 
+  geom_histogram(aes(x = n), binwidth = 1)+
+  xlim(0,400)
+
+trios_sep <- separate_rows(MI.info, MendIncLoci, sep=",")
+trios_count <- trios_sep %>%
+ group_by(MendIncLoci) %>%
+ count()
+MI.info %>% tally()
+#11922
+trios_count <- trios_count %>%
+ ungroup() %>%
+ mutate(total = 11922)
+trios_count <- trios_count %>%
+ mutate(frequency = (n/total),
+        percent = ((n/total)*100))
+trios_count %>% arrange(desc(percent))
+
+trios_count %>% 
+  filter(!is.na(MendIncLoci)) %>% 
+  ggplot() +
+  geom_histogram(aes(x = n), binwidth = 1)
+
+```
+
+
+Comparing no sad to no sad + no hatcheries info
+first, reformat the nohatch results
+```{r}
+D <- results_no_sad_rm7_nohatch 
+D2 <- D %>%
+    ungroup() %>%
+    mutate(trio_index = 1:n()) %>%
+    select(trio_index, everything())
+
+  # first break D into reported trios and non-reported trios
+  trios <- D2 %>%
+    filter(!is.na(ma) & !is.na(pa))
+
+  NA_trios <- D2 %>%
+    filter(is.na(ma) | is.na(pa))
+
+  # now, we break trios into the "active" columns (which we are going to be changing)
+  # and the "inactive" ones, which we will join back on via the trio index later.
+  t_active <- trios %>%
+    select(trio_index:ma_hatchery) %>%
+    rename(
+      kid_id = kid,
+      pa_id = pa,
+      ma_id = ma
+    ) %>%
+    mutate(
+      kid_year = as.character(kid_year),
+      ma_year = as.character(ma_year),
+      pa_year = as.character(pa_year)
+    )
+  t_inactive <- trios %>%
+    select(-(kid:ma_hatchery))
+
+  # now, we do some pivot operations so that each trio is stored as three
+  # rows in order: kid, ma, pa; and the sex, year, spawner group, and hatchery of
+  # each member of the trio is in a separate column.
+  # Perhaps there is a way to do this as a single pivot_longer, but I
+  # ended up doing a pivot_longer followed by a pivot wider
+  ta2 <- t_active %>%
+    pivot_longer(
+      cols = -c(trio_index, SpawnYear),
+      names_to = c("member", "variable"),
+      names_sep = "_"
+    ) %>%
+    pivot_wider(
+      names_from = variable,
+      values_from = value
+    ) %>%
+    arrange(trio_index, member)
+
+  # now, if we group by trio index, we have three rows: kid, ma, pa.  And now
+  # we look at the sex column to see if the ma and pa labels need to be reassigned.
+  ta3 <- ta2 %>%
+    group_by(trio_index) %>%
+    mutate(
+      member = {
+        ret <- c("kid", "ma", "pa")
+        if ( (!is.na(sex[2]) && !is.na(sex[3])) &&    # if both are not NA and sexes are reversed
+             (sex[2] == "Male" && sex[3] == "Female")
+        ) {
+          ret <- c("kid", "pa", "ma")
+        } else if (!is.na(sex[3]) && sex[3] == "Female" && is.na(sex[2])) {  # if pa's sex is not NA and Female, and ma's sex is NA,
+          ret <- c("kid", "pa", "ma")
+        } else if (!is.na(sex[2]) && sex[2] == "Male" && is.na(sex[3])) {  # if ma's sex is not NA and Male, and pa's sex is NA
+          ret <- c("kid", "pa", "ma")
+        }
+
+        ret
+      }
+    ) %>%
+    ungroup()
+
+  # now, we pivot this wider
+  ta4 <- ta3 %>%
+    pivot_wider(
+      names_from = member,
+      values_from = id:hatchery,
+      names_sep = "_"
+    )
+
+  # and deal with the names.  This is a bit ugly and will break
+  # when there are more extra columns in the front there...
+  tmpmat <- names(ta4)[-(1:2)] %>%
+    str_split_fixed(., "_", 2)
+  names(ta4)[-(1:2)] <- paste(tmpmat[, 2], tmpmat[, 1], sep = "_")
+
+  # rename a few things and join the inactive columns back on there
+  ta_done <- ta4 %>%
+    rename(
+      kid = kid_id,
+      pa = pa_id,
+      ma = ma_id
+    ) %>%
+    select(trio_index, kid, pa, ma, everything()) %>%
+    left_join(t_inactive, by = "trio_index")
+
+  # then return those along with the NA columns
+reformat_no_sad_rm7_nohatch <- bind_rows(
+    NA_trios,
+    ta_done
+  ) %>%
+    arrange(trio_index) %>%
+    select(-trio_index)
+
+reformat_no_sad_rm7_nohatch
+```
+
+
+```{r}
+reformat_no_sad_rm7
+reformat_no_sad_rm7_nohatch 
+
+conAll.edit <- reformat_no_sad_rm7 %>% 
+  mutate(Kid_Ma_Pa = stringr::str_c(kid,ma,pa, sep = "_")) %>% 
+  arrange(kid)
+uAll.edit <- reformat_no_sad_rm7_nohatch  %>% 
+  mutate(Kid_Ma_Pa = stringr::str_c(kid,ma,pa, sep = "_")) %>% 
+  mutate(Kid_Pa_Ma= stringr::str_c(kid,pa,ma, sep = "_")) %>% 
+  arrange(kid)
+
+RRdiff <- conAll.edit %>% 
+  mutate(Compare = ifelse(((conAll.edit$Kid_Ma_Pa == uAll.edit$Kid_Pa_Ma) | (conAll.edit$Kid_Ma_Pa == uAll.edit$Kid_Ma_Pa)), yes = "Same", no = "Different"))
+
+diff_un_rename <- rename_at(uAll.edit, vars(-kid), function(x) paste0(x,"_no_hatch"))
+diff_un_rename
+comparison <- inner_join(RRdiff, diff_un_rename, "kid") %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se" & FDR <= 0.01 | MaxP.Pr.Relat_no_hatch == "C_Se_Se" & FDR_no_hatch <= 0.01)
+comparison
+#12621
+i <-  1:12621 #number of samples in comparison
+noSad_noSadnoHatch_comp <- comparison %>%  
+  mutate(Un_Diff_Hatchery = ifelse(pa_hatchery_no_hatch[i] != ma_hatchery_no_hatch[i], yes = "Parents from Different Hatcheries", no = "Same Hatchery"))
+noSad_noSadnoHatch_comp %>% filter(Compare == "Same") #12633/12645
+noSad_noSadnoHatch_comp %>% filter(Compare == "Different"| is.na(Compare)) #12
+
+inner_join(RRdiff, diff_un_rename, "kid") %>% 
+  filter(pa_hatchery_no_hatch != ma_hatchery_no_hatch) %>% 
+  filter(MaxP.Pr.Relat_no_hatch == "C_Se_Se")
+
+```
+ 
+Going to join the no-hatch data to the sad/no_sad file and look for differences post-filtering the sad/nosad
+```{r}
+comp_5
+hatch <- uAll.edit %>% rename_at(vars(-kid), function(x) paste0(x,"_no_hatch"))
+
+sad_nosad_nohatch <- left_join(comp_5, hatch, by = "kid") %>%
+  mutate(Compare_noSAD_to_noHatch = ifelse((Kid_Ma_Pa_unconstrained == Kid_Ma_Pa_no_hatch) | (Kid_Ma_Pa_unconstrained == Kid_Pa_Ma_no_hatch), yes = "Same", no = "Different")) 
+
+```
+
+ 
+```{r}
+#sad and noSAD
+same_trios_in_both <- comp_5 %>% filter(Compare == "Same") %>% select(kid) 
+
+#no data for con, keep uncon:
+sadNA <- comp_5 %>% filter(is.na(Compare)) %>% select(kid) 
+
+# constrained found a trio, but it does not meet the criteria of C_Se_Se+ FDR<=0.01; the unconstrained run assigned different parents that do meet the criteria.  In these cases, we will assume the noSAD/unconstrained trio is correct
+unconKeep <- comp_5 %>% filter(Compare == "Different") %>% 
+  filter(FDR > 0.01 | MaxP.Pr.Relat != "C_Se_Se", FDR_unconstrained <= 0.01, MaxP.Pr.Relat_unconstrained == "C_Se_Se") %>%  
+  select(kid)
+
+same_trios_in_both; sadNA; unconKeep
+
+uncon_trio <- bind_rows(sadNA, unconKeep)
+
+
+trios1 <- results_sad_rm7 %>% right_join(same_trios_in_both, by = "kid")
+
+trios2 <- reformat_no_sad_rm7 %>% right_join(uncon_trio, by = "kid")
+
+trios1 %>% filter(FDR > 0.01) #zero
+trios2 %>% filter(FDR > 0.01) #zero
+
+#To get my pedigree in good working order, I will need to make two columns for kid_year, and then calculate ages
+RR_Pedigree <- bind_rows(trios1, trios2) %>% 
+  separate(col = kid_year, into = c("kid_year", "kid_year2"), sep = ",") %>% 
+  mutate(kid_year = as.numeric(kid_year), kid_age = kid_year - SpawnYear)
+RR_Pedigree %>% count(kid_age)
+
+RR_Pedigree %>% filter(kid_age == 1) #there are 2 one year olds...
+comp_5 %>% filter(kid == "M047564")
+RR_Pedigree #13502
+```
+
+
+ Now making a pedigree with sad and noSadnoHatch snppit results:
+ ##This is the final pedigree, combo of SAD and noSADnoHATCH 
+```{r}
+#sad and noSADnoHatch
+#first make comprison file
+reformat_no_sad_rm7_nohatch
+results_sad_rm7
+
+conAll.edit <- results_sad_rm7 %>% 
+  mutate(Kid_Ma_Pa = stringr::str_c(kid,ma,pa, sep = "_")) %>% 
+  arrange(kid)
+uAll.edit <- reformat_no_sad_rm7_nohatch  %>% 
+  mutate(Kid_Ma_Pa = stringr::str_c(kid,ma,pa, sep = "_")) %>% 
+  mutate(Kid_Pa_Ma= stringr::str_c(kid,pa,ma, sep = "_")) %>% 
+  arrange(kid)
+
+RRdiff <- conAll.edit %>% 
+  mutate(Compare = ifelse(((conAll.edit$Kid_Ma_Pa == uAll.edit$Kid_Pa_Ma) | (conAll.edit$Kid_Ma_Pa == uAll.edit$Kid_Ma_Pa)), yes = "Same", no = "Different"))
+
+diff_un_rename <- rename_at(uAll.edit, vars(-kid), function(x) paste0(x,"_no_hatch"))
+diff_un_rename
+comparison <- inner_join(RRdiff, diff_un_rename, "kid") %>% 
+  filter(MaxP.Pr.Relat == "C_Se_Se" & FDR <= 0.01 | MaxP.Pr.Relat_no_hatch == "C_Se_Se" & FDR_no_hatch <= 0.01)
+comparison
+#13520
+i <-  1:13520 #number of samples in comparison
+Sad_noSadnoHatch_comp <- comparison %>%  
+  mutate(Un_Diff_Hatchery = ifelse(pa_hatchery_no_hatch[i] != ma_hatchery_no_hatch[i], yes = "Parents from Different Hatcheries", no = "Same Hatchery"))
+Sad_noSadnoHatch_comp %>% filter(Compare == "Same") #was 13252/13515; now 13254/13520
+Sad_noSadnoHatch_comp %>% filter(Compare == "Different"| is.na(Compare)) #263, now 266
+
+Sad_noSadnoHatch_comp
+
+##Now try and form a pedigree
+same_trios_in_both <- Sad_noSadnoHatch_comp %>% filter(Compare == "Same") %>% select(kid) #13254
+
+#no data for con, keep uncon:
+sadNA <- Sad_noSadnoHatch_comp %>% filter(is.na(Compare)) %>% select(kid) #188
+
+# constrained found a trio, but it does not meet the criteria of C_Se_Se+ FDR<=0.01; the unconstrained run assigned different parents that do meet the criteria.  In these cases, we will assume the noSAD/unconstrained trio is correct
+unconKeep <- Sad_noSadnoHatch_comp %>% filter(Compare == "Different") %>% 
+  filter(FDR > 0.01 | MaxP.Pr.Relat != "C_Se_Se") %>% 
+  filter(FDR_no_hatch <= 0.01, MaxP.Pr.Relat_no_hatch == "C_Se_Se") %>%  
+  select(kid) #38
+
+same_trios_in_both; sadNA; unconKeep
+
+uncon_trio <- bind_rows(sadNA, unconKeep)
+
+
+trios1 <- results_sad_rm7 %>% right_join(same_trios_in_both, by = "kid")
+
+trios2 <- reformat_no_sad_rm7_nohatch %>% right_join(uncon_trio, by = "kid")
+
+trios1 %>% filter(FDR > 0.01) #zero
+trios2 %>% filter(FDR > 0.01) #zero
+
+#To get my pedigree in good working order, I will need to make two columns for kid_year, and then calculate ages
+RR_Pedigree_noHatch <- bind_rows(trios1, trios2) %>% 
+  separate(col = kid_year, into = c("kid_year", "kid_year2"), sep = ",") %>% 
+  mutate(kid_year = as.numeric(kid_year), kid_age = kid_year - SpawnYear)
+RR_Pedigree_noHatch %>% count(kid_age)
+
+RR_Pedigree_noHatch #13480
+```
+
+How do they differ?
+```{r}
+RR_Pedigree
+RR_Pedigree_noHatch
+
+
+RR_Pedigree %>% count(kid_age)
+RR_Pedigree_noHatch %>% count(kid_age)
+
+inner_join(RR_Pedigree, RR_Pedigree_noHatch, by = "kid") #13475 kids in both 
+anti_join(RR_Pedigree, RR_Pedigree_noHatch, by = "kid") #27 kids in RR_Pedigree but not in noHatch
+anti_join(RR_Pedigree_noHatch, RR_Pedigree, by = "kid") #5 kids in RR_Pedigree_noHatch, but not in RR_Pedigree
+
+RR_Pedigree_noHatch %>% 
+  filter(pa_hatchery != ma_hatchery) #3 trios with parents from different hatcheries
+```
+
+
+
+# I'm Going to use the RR_Pedigree_noHatch!##
+
+```{r}
+RR_Pedigree_noHatch %>% 
+  filter(grepl("Coyote_Valley|Warm_Springs", kid))
+# this list of kids are in here twice...they should have the same parents for both parent assignments. They have two ids because they were recorded at more than one hatchery. 
+#M065002, M108189, M108351, M109166, M109175, M109610
+kids_to_check <- c("M065002", "M108189", "M108351", "M109166", "M109175", "M109610")
+RR_Pedigree_noHatch %>% 
+  filter(grepl("M065002|M108189|M108351|M109166|M109175|M109610", kid))
+#The parent assignments are identical for each pair, I will now need to remove these duplicates from the pedigree data
+```
+Now I need to remove the six duplicates from the total data set. This should take the data from from 13480 to 13474
+```{r}
+rm_these <- RR_Pedigree_noHatch %>% 
+  filter(grepl("Coyote_Valley|Warm_Springs", kid))
+
+RR_Ped <- RR_Pedigree_noHatch %>% 
+  anti_join(rm_these, by = "kid")  #now 13474
+
+RR_Ped
+```
+
+So the final pedigree is now...
+```{r}
+RR_Ped
+RR_Ped %>% count(kid_age)
+RR_Ped %>% count(kid_sex)
+RR_Ped %>% count(kid_age, kid_sex)
+RR_Ped %>% count(kid_age, kid_sex, kid_hatchery)
+
+RR_Ped %>% filter(ma_hatchery != pa_hatchery) #3
+RR_Ped %>% filter(ma_sex == pa_sex) #144
+RR_Ped %>% filter(ma_sex == pa_sex) %>% count(SpawnYear)
+```
+Full dataset of fish from 2007-2020
+```{r}
+RR_meta <- reorg_rm7$snppit_meta
+RR_genos <- reorg_rm7$snppit_genos
+
+RR_meta #17535
+RR_meta %>% 
+  filter(grepl("Coyote_Valley|Warm_Springs", indiv)) #9
+#need to remove the 9 duplicates and join the full metadata if needed?...
+# maybe add the second hatchery visit to hatchery column the for indiv
+
+RR_meta %>% 
+  filter(grepl("M035090", indiv))
+##oh man this might be an issue...the different ids have different dates in addition to different hatcheries. 
+# it might be easier to fix this by going back to the matching sample function and change some of the code
+```
+okay, I'm going to take the pieces of code from reorganize_matching_samples() to try and make the date table I am envisioning...
+```{r}
+genotypes <-  genos_na_rm7
+metadata <-  rrsh_metadata  
+clusters <-  for_real_rm7$clusters
+#' Relabel matching genotypes to a single ID and reorganize their years and spawner groups
+
+  # make sure that NA spawner groups are coded as ?
+  metadata <- metadata %>%
+    mutate(spawner_group = ifelse(is.na(spawner_group), "?", spawner_group))
+
+  # figure out which individual to take for each cluster.
+  # It will be the one with the most non-missing genotypes and, in case
+  # of a tie, the one taken will be pretty much arbitrary.  Note that
+  # if there are any IDs in genotypes or clusters that are not in meta data this will
+  # cause a problem.  So, we semijoin on the metadata at the end.
+  ids_key <- genotypes %>%
+    semi_join(clusters, by = "indiv") %>%
+    group_by(indiv) %>%
+    summarise(num_good_genos = sum(!is.na(allele_int) / 2)) %>%
+    left_join(clusters, ., by = "indiv") %>%
+    arrange(cluster, desc(num_good_genos)) %>%
+    group_by(cluster) %>%
+    dplyr::do(tibble(retained_id = .$indiv[1], original_id = .$indiv)) %>%
+    ungroup() %>%
+    semi_join(metadata, by = c("original_id" = "indiv"))
+
+
+  # now, we attach that result to the meta data
+  matchers_meta <- ids_key %>%
+    left_join(metadata, by = c("original_id" = "indiv"))
+
+  # use the matching pairs, thus organized, to compute some reports about
+  # genotype discordance, etc.
+  geno_discord <- count_discrepancies(
+    pairs = matchers_meta,
+    genotypes = genotypes
+  )
+
+  # check for matchers that are in different hatcheries
+  # and bark a message if there are any.  They have to be treated
+  # a little differently.
+  cross_hatchery_matches <- matchers_meta %>%
+    group_by(cluster) %>%
+    filter(n_distinct(hatchery) > 1)
+
+  if (nrow(cross_hatchery_matches) > 0) {
+    message("Some matching genotypes found in different hatcheries. See cross_hatchery_matches in output.")
+  }
+
+  # check for matchers that have different sexes listed
+  cross_sex_matches <- matchers_meta %>%
+    group_by(cluster) %>%
+    filter(n_distinct(sex) > 1)
+
+  if (nrow(cross_hatchery_matches) > 0) {
+    message("Some matching genotypes found to have different sexes. See cross_sex_matches in output.")
+  }
+
+  # To deal with matchers in multiple hatcheries, we still want to use just a single genotype (with the
+  # least missing data) but we will have to use a single canonical ID for each of the hatcheries that
+  # the matching samples occur in.  The problem that occurs then is that we could assign an individual
+  # to itself.  So, to catch those cases visually, later, we will name those canonical IDs in the other hacheries
+  # as `retained-id_hatchery`.
+  matchers_meta2 <- matchers_meta %>%
+    group_by(cluster, retained_id) %>%
+    mutate(idx_in_data = 1:n()) %>%
+    group_by(cluster, retained_id) %>%
+    select(cluster, everything()) %>%
+    ungroup()
+
+  # below here we are mainly compiling up the genotypes.  There is just one thing that
+  # we want to do before that, however: for the retained_id fish that had matching samples
+  # that showed a homozygote-to-homozygote discordance (i.e. 11 vs 44), we want to mark those
+  # loci as missing in those retained_id fish.  We do that just by modifying genotypes.
+  if(nrow(geno_discord$alt_homoz_mismatches) > 0) {
+    make_these_na <- geno_discord$alt_homoz_mismatches %>%
+      select(retained_id, locus) %>%
+      rename(indiv = retained_id) %>%
+      mutate(dummy__ = 1)
+
+    genotypes %>%
+      left_join(make_these_na, by = c("indiv", "locus")) %>%
+      mutate(allele_int = ifelse(!is.na(dummy__), NA, allele_int)) %>%
+      select(-dummy__)
+
+    message("Rendered ", nrow(make_these_na), " genotypes NA because of mismatching homozygotes in the matching samples analysis")
+  }
+
+
+  # now, we need to prepare the genotypes that we will use for SNPPIT.  Firt, we want to
+  # chuck the genotypes of the original_id's that were not retained
+  genos_non_canon_dropped <- matchers_meta2 %>%
+    filter(retained_id != original_id) %>% # this lets us keep the canonical genotypes IDs
+    anti_join(genotypes, ., by = c("indiv" = "original_id"))
+
+
+  # combine those to get the data set we need for SNPPIT
+  snppit_genos <- genos_non_canon_dropped
+  
+
+  # now, we need to condense the meta data that we need
+  # into a tibble that has combined the years and the spawn
+  # groups that each individual belongs to. We can do this by grouping
+  # on new_id and hatchery at this point.
+  matchers_meta_snppit <- matchers_meta2 %>%
+    rename(indiv = retained_id) %>%
+    group_by(indiv) %>%
+    summarise(
+      year = paste(sort(unique(year)), collapse = ","),
+      spawner_group = paste(unique(spawner_group), collapse = ","),
+      hatchery = paste(sort(unique(hatchery)), collapse = ","),
+      length = paste(sort(unique(length)), collapse = ","),
+      watershed = paste(sort(unique(watershed)), collapse = ","),
+      Wild = paste(unique(Wild), collapse = ","),
+      sex = sex[1]  # just take the sex of the first (canonical) occurrence of the genotype
+    ) %>%
+    ungroup()
+
+  # and we will need to combine that with all the fish that were not
+  # part of the meta_matchers.  We make a data frame of all the individuals
+  # that are not handled by the matchers and then we bind_rows() them and
+  # arrange them nicely.
+  meta_singletons <- metadata %>%
+    anti_join(ids_key, by = c("indiv" = "original_id"))
+
+  snppit_meta <- bind_rows(
+    matchers_meta_snppit,
+    meta_singletons %>% mutate(year = as.character(year)) %>% mutate(length = as.character(length))
+  ) %>%
+    arrange(hatchery, year, spawner_group)
+
+  # now, down at the end here we return a list of outputs.
+  # note that we leave the retained_id column in matchers_meta2, as it
+  # can be helpful to know that
+  #list(
+   # matchers_metadata = matchers_meta2,
+  #  snppit_meta = snppit_meta,
+  #  snppit_genos = snppit_genos,
+  #  cross_hatchery_matches = cross_hatchery_matches,
+  #  cross_sex_matches = cross_sex_matches,
+  #  geno_discord = geno_discord
+  
+
+snppit_meta #17526 fish
+```
+
+```{r}
+snppit_meta %>% count(Wild)
+snppit_meta %>% count(hatchery)
+```
+MY DATA:
+```{r}
+RR_Ped
+snppit_meta
+
+write_csv(RR_Ped, "RR_Pedigree_2007_2020.csv" )
+write_csv(snppit_meta, "RR_unique_individuals_2007_2020.csv" )
+```
+```{r}
+snppit_meta %>% count(year) #looks like 68 iteroperous fish
+```
+```{r}
+snppit_meta %>%  count(sex)
+snppit_meta %>% count(hatchery, sex)
+```
+
+```{r}
+itero_fish <- snppit_meta %>% filter(grepl(",", year))%>% 
+  separate(year, c("year1", "year2"), sep = ",") %>% 
+  separate(spawner_group, c("date1","date2", "date3"), sep = ",") %>% 
+  separate(length, c("length1", "length2"), sep = ",") %>% 
+  select(indiv, sex, everything())
+itero_fish %>% count(sex) #15 female, 52 male, 1 unknown
+itero_fish
+
+write_csv(itero_fish, "RR_itero_fish.csv")
+```
+
+```{r}
+itero_fish$length1 <- as.numeric(itero_fish$length1)
+itero_fish$length2 <- as.numeric(itero_fish$length2)
+it <- itero_fish %>% mutate(growth = (length2 - length1)) 
+mean(it$growth, na.rm = T)
+sd(it$growth, na.rm = T)
+#growth in mm
+```
+How many itero fish were assigned parents? what were their ages?
+```{r}
+itero_as_kids <- itero_fish %>% rename(kid = indiv) %>% 
+  left_join(RR_Ped, by = "kid")
+write_csv(itero_as_kids, "RR_itero_and_parent_assignments.csv")
+
+
+itero_as_kids %>% count(kid_age) #age at first spawn
+itero_as_kids %>%  count(kid_sex, kid_age)
+snppit_meta %>% count(sex, year)
+```
+
+list of cross sex matches:
+#the na/males should now be gone since i added teh sex data
+```{r}
+cross_sex_matches 
+cross_sex_matches %>%  count(retained_id)
+
+#there fish that have been marked male/female and fish that are NA/male, I will separate them...
+na_male_clusters <- cross_sex_matches %>% filter(is.na(sex)) %>% select(cluster)
+
+fish_marked_as_both_sexes <- cross_sex_matches %>% 
+  anti_join(na_male_clusters, by = "cluster") %>% 
+  ungroup %>% 
+  select(retained_id) %>% 
+  unique() %>% 
+  rename(indiv = retained_id)
+
+fish_marked_as_NA_male <- cross_sex_matches %>% 
+  semi_join(na_male_clusters, by = "cluster") %>% 
+  ungroup %>% 
+  select(retained_id) %>% 
+  unique() %>% 
+  rename(indiv = retained_id)
+
+itero_fish %>% semi_join(fish_marked_as_both_sexes, by = "indiv") #one itero fish that is marked as both Male and Female; still true
+
+itero_fish %>% semi_join(fish_marked_as_NA_male, by = "indiv") #one itero fish that is marked as NA, was also id'd as male--> now none, this was fixed by adding the sex info
+
+fish_marked_as_both_sexes #26 fish (stayed the same)
+fish_marked_as_NA_male #6 fish, now zero
+```
+```{r}
+itero_as_kids %>% count(sex)
+itero_as_kids %>% count(hatchery, sex)
+itero_as_kids %>% filter(!is.na(pa))
+itero_as_kids %>% count(kid_age)
+itero_as_kids %>% count(sex, kid_age)
+itero_as_kids %>% filter(!is.na(length1))
+itero_as_kids %>% filter(!is.na(length2))
+mean(itero_as_kids$length1, na.rm = T)
+sd(itero_as_kids$length1, na.rm = T)
+mean(itero_as_kids$length2, na.rm = T)
+sd(itero_as_kids$length2, na.rm = T)
+itero_as_kids %>% count(sex,kid_age,is.na(length1))
+itero_as_kids %>% count(year1)
+itero_as_kids %>% count(year1, sex, kid_age) 
+```
+
+```{r}
+fish_marked_as_both_sexes #26 fish
+fish_marked_as_NA_male #6 fish; now zero
+
+fish_marked_as_both_sexes %>%  rename(pa = indiv) %>% 
+  inner_join(RR_Ped, by = "pa") %>% count(pa)
+#so the following might be male: M034284,M034719, M048846, M056772, M072111, M073833
+#might be female: M036653, M048318,
+
+fish_marked_as_both_sexes %>%  rename(ma = indiv) %>% 
+  inner_join(RR_Ped, by = "ma")
+#the following might be female: M036653, M048059, M048922, M064610, M072135
+#might be male: M074590	
+
+fish_marked_as_NA_male %>% rename(pa = indiv) %>% 
+  inner_join(RR_Ped, by = "pa") %>%  count(pa)
+#The following a very likely to be male: M093061, M093065, M093110, M093211, M093225
+##this has been solved, no  longer a problem
+
+fish_marked_as_NA_male %>% rename(ma = indiv) %>% 
+  inner_join(RR_Ped, by = "ma")
+# M093225 is likely male, but marked as a "ma" once (kid = M120191)
+##this has been solved, no longer a problem
+```
+
+```{r}
+RR_Ped %>% count(kid_age, kid_sex, kid_hatchery)
+```
+
+```{r}
+snppit_meta %>% count(year)
+```
+
+Going through new function to solve sex id issues
+```{r}
+library(tidyverse)
+library(HatcheryPedAgree)
+library(ggraph)
+library(tidygraph)
+
+RR_Ped
+issues <- compile_pedigree_sex_issues(RR_Ped)
+issues
+names(issues)
+issues$parent_pairs_graph
+issues$sex_clash_clusters
+issues$sex_unknown_clusters
+issues$sex_clash_clusters_plot
+issues$sex_unknown_clusters_plot
+
+# sex clashing clusters
+ggsave(
+  issues$sex_clash_clusters_plot,
+  filename = "clash.pdf",
+  width = 30,
+  height = 30
+  )
+# sex unknown clusters
+ggsave(
+  issues$sex_unknown_clusters_plot,
+  filename = "unknown.pdf",
+  width = 15,
+  height = 15 
+  )
+
+RR_Ped %>% filter(pa_sex == ma_sex) %>% 
+  mutate(pa_ma = paste(pa, ma, sep = "_")) %>% 
+  count(pa_ma) %>% arrange(desc(n))
+
+RR_Ped %>% filter(kid == "M074570")
+```
+
+Pedigree notes:
+13514 trios when comparing constrained and unconstrained results
+13248 trios the same
+266 different
+removed 40 trios, 
+therefore,final total of 13474 trios in final pedigree info
+

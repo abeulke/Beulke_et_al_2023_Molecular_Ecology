@@ -1,0 +1,240 @@
+---
+title: "Heritability of Age, Notebook 9"
+output: html_notebook
+---
+The goal is to make a function for getting heritability values
+
+bop = (xp-xo)(⏀p)/(p(xp))
+xp and xo from x values in z score caluculation with z equal to ⏀p and ⏀o(written as Yp and Yo below)
+p(xp) = ((2π)^(-1/2))e^(-(xp^2)/2)
+z score is caluculated from
+ z = ( x - μ ) / σ  
+x - x vector (elements of x vector)
+μ - mean value of x vector
+σ - standard deviation of x vector
+
+```{r}
+Yp <- 0.001 #number of affected parents out of all parents
+Yo <- 0.040 #number of affected offspring from affected parents, out of all offspring from affected parents
+
+#figured out how to get the z score values!!!!!
+Xp <- -qnorm(Yp)#3.09
+Xo <- -qnorm(Yo)#1.751
+
+Yp; Yo; Xp; Xo
+
+falconer <- function(Yp, Yo){
+  Xp <- -qnorm(Yp)
+  Xo <- -qnorm(Yo)
+  bop <- {((Xp-Xo)*Yp)/(((2*pi)^(-1/2))*exp(-(Xp^2)/2))}
+  h2 <- {2*bop}
+  both <- list(bop, h2)
+  return(both)}
+falconer(Yp, Yo)
+
+reich <- function(Yp, Yo){
+  Xp <- -qnorm(Yp)
+  Xo <- -qnorm(Yo)
+  Zw <- (((2*pi)^(-1/2))*exp(-(Xp^2)/2))/Yp
+  rop <- (Xp-Xo*(1-(Xp^2-Xo^2)*(1-(Xp/Zw)))^(1/2))/(Zw +(Xo^2)*(Zw-Xp))
+  h2 <- 2*rop
+  both <- list(rop, h2)
+  return(both)}
+reich(Yp, Yo)
+
+edwards <- function(Yp, Yo){
+  k <- Yo/Yp
+  rop <- (0.57*log(k))/(-log(Yp)-0.44*log(k)-0.18)
+  h2 <- 2*rop
+  both <- list(rop, h2)
+  return(both)}
+#this equation may not be correct
+edwards(Yp, Yo)
+
+```
+```{r}
+# Standard Error
+
+falconer_se <- function(Yp, Yo, Np, No){
+  Xp <- -qnorm(Yp)
+  Xo <- -qnorm(Yo)
+  p_xp <- {(((2*pi)^(-1/2))*exp((-Xp^2)/2))}
+  p_xo <- {(((2*pi)^(-1/2))*exp((-Xo^2)/2))}
+  Zo <- (Xp-Xo)
+  Zw <- (p_xp/Yp)
+  bop <- {Zo/Zw}
+  h2 <- {2*bop}
+  Vbop <- {(((1/Zw) - (bop*(Zw-Xp)))^2)*((Yp*(1-Yp))/(Np*(p_xp^2))) + ((Yo*(1-Yo))/((Zw^2)*No*(p_xp^2)))}
+  h2_se <- {2*sqrt(Vbop)}
+  all <- list(bop, h2, Vbop, h2_se)
+  return(all)}
+
+falconer_se(0.001, 0.040, 4000, 3000)
+
+  
+```
+
+Okay now that i have functions working to compute the three equation, now i need to connect the functions to my data set
+```{r}
+library(tidyverse)
+#list of unique mas and pas from the AgeMatrix
+AgeMatrix <- read_csv("RR_2007-2020_age_matrix.csv")
+AgeMatrix %>% 
+  filter(SpawnYear < 2018) %>% 
+  distinct(ma)
+#1947 mothers, 3378 fathers, 7486 trios(when exclude parents from 2018)
+
+
+#Transition Matrix Info
+Fathers <- read_csv("RR_2007-2020_transition_matrix_fathers.csv")
+Mothers <- read_csv("RR_2007-2020_transition_matrix_mothers.csv")
+MidParent <- read_csv("RR_2007-2020_transition_matrix_midparent.csv")
+
+Fathers
+Mothers
+MidParent
+```
+
+```{r}
+#2 yr old fathes and sons
+#Yp #number of affected parents out of all parents, so #2yr fathers out of all fathers
+#Yo #number of affected offspring from affected parents, out of all offspring from affected parents, so number of 2yr old male offspring out of all male offspring from 2 yr old fathers
+pa2yr <- AgeMatrix %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(pa_age == 2) %>% 
+  filter(new_pa_sex == "Male") %>% 
+  distinct(pa)
+pas <- AgeMatrix %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_pa_sex == "Male") %>%  
+  distinct(pa)
+
+Yp <- nrow(pa2yr)/nrow(pas)
+Np <- nrow(pas)
+a <- Fathers %>% filter(pa_age == 2, new_pa_sex == "Male", new_kid_sex == "Male", kid_age == 2)
+Yo <- a$freq
+b <- Fathers %>% filter(pa_age == 2, new_pa_sex == "Male", new_kid_sex == "Male") %>% summarize(sum(n)) %>% rename(n = 'sum(n)')
+No <- b$n
+
+F2 <- falconer(Yp, Yo) 
+E2 <- edwards(Yp, Yo) 
+R2 <- reich(Yp, Yo) 
+FS2 <- cbind(Yp,Yo,F2,E2,R2)
+FS2
+
+falconer_se(Yp, Yo, Np, No)
+```
+
+
+```{r}
+#2 yr mother and daughters
+Yp <- nrow(ma2yr)/nrow(mas)
+a <- filter(Mothers, ma_age == 2, new_ma_sex == "Female", new_kid_sex == "Female", kid_age == 2)
+Yo <- a$freq
+Np <- nrow(mas)
+b <- Mothers %>% filter(ma_age == 2, new_ma_sex == "Female", new_kid_sex == "Female") %>% summarize(sum(n)) %>% rename(n = 'sum(n)')
+No <- b$n
+
+F2 <- falconer(Yp, Yo) 
+E2 <- edwards(Yp, Yo) 
+R2 <- reich(Yp, Yo) 
+MD2 <- cbind(Yp,Yo,F2,E2,R2)
+MD2
+
+falconer_se(Yp, Yo, Np, No)
+```
+
+#want to do midparent and all offspring!!
+```{r}
+#need to get mid parent offspring frequencies with the sexes together
+MidParent2 <- AgeMatrix %>%
+  filter(SpawnYear < 2018) %>% 
+  group_by(mid_age, age_pair, kid_age) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n))
+
+MidParent2
+#write_csv(MidParent2, "RR_2007-2020_transition_matrix_midparent_all_offspring.csv")
+```
+
+```{r}
+#midparent and all offspring
+#2yr olds
+# bop = h2, since there are two parents involved and the coeff of relatedness is equal to 1 instead of 1/2
+
+Yp <- nrow(mid2yr)/nrow(mid)
+a <- filter(MidParent2, mid_age == 2, kid_age == 2)
+Yo <- a$freq
+Np <- nrow(mid)
+b <- MidParent2 %>% filter(mid_age == 2) %>% summarize(sum(n)) %>% rename(n = 'sum(n)')
+No <- b$n
+
+F2 <- falconer(Yp, Yo) 
+E2 <- edwards(Yp, Yo) 
+R2 <- reich(Yp, Yo) 
+MDAll2 <- cbind(Yp,Yo,F2,E2,R2)
+MDAll2
+
+falconer_se(Yp, Yo, Np, No)
+sqrt(0.0139328)
+```
+
+##how about two year old parents, no matter the sex and 2 yr old offspring no  matter the sex
+```{r}
+#2 yr old fathes and sons
+#Yp #number of affected parents out of all parents, so #2yr fathers out of all fathers
+#Yo #number of affected offspring from affected parents, out of all offspring from affected parents, so number of 2yr old male offspring out of all male offspring from 2 yr old fathers
+pa2yr <- AgeMatrix %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(pa_age == 2) %>% 
+  filter(new_pa_sex == "Male") %>%
+  distinct(pa)
+ma2yr <- AgeMatrix %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(ma_age == 2) %>% 
+  filter(new_ma_sex == "Female") %>%
+  distinct(ma)
+pas <- AgeMatrix %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_pa_sex == "Male") %>%  
+  distinct(pa)
+mas <- AgeMatrix %>% 
+  filter(SpawnYear < 2018) %>% 
+  filter(new_ma_sex == "Female") %>%  
+  distinct(ma)
+
+Yp <- (nrow(pa2yr) + nrow(ma2yr))/(nrow(pas) + nrow(mas))
+#stuck here...need a "transition panel of the ages of offspring from 2 yr old parents
+Np <- (nrow(pas) + nrow(mas))
+
+EitherParent2 <- AgeMatrix %>%
+  filter(SpawnYear < 2018) %>% 
+  filter(new_ma_sex == "Female", new_pa_sex == "Male") %>% 
+  mutate(EP2yr = case_when(ma_age == 2 ~ "2",
+                           pa_age == 2 ~ "2")) %>% 
+  group_by(EP2yr, kid_age) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n))
+#write_csv(MidParent2, "RR_2007-2020_transition_matrix_midparent_all_offspring.csv")
+
+
+a <- EitherParent2 %>% filter(EP2yr == "2", kid_age == 2)
+Yo <- a$freq
+b <- EitherParent2 %>% filter(EP2yr == "2") %>% summarize(sum(n)) %>% rename(n = 'sum(n)')
+No <- b$n
+
+Either2_falconer <- falconer(Yp, Yo) 
+Either2_edwards <- edwards(Yp, Yo) 
+Either2_reich <- reich(Yp, Yo) 
+either <- cbind(Yp,Yo,Either2_falconer, Either2_edwards, Either2_reich)
+either
+
+Xp <- -qnorm(Yp)
+  Xo <- -qnorm(Yo)
+  bop <- {((Xp-Xo)*Yp)/(((2*pi)^(-1/2))*exp(-(Xp^2)/2))}
+  h2 <- {2*bop}
+
+  
+falconer_se(Yp,Yo,Np,No)
+```
+
