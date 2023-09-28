@@ -1,5 +1,6 @@
 ---
 title: "RR Steelhead 2007-2020, correlations with Omy05, Notebook 6"
+author: "Anne Beulke"
 output: html_notebook
 ---
 

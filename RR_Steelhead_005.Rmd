@@ -1,5 +1,6 @@
 ---
 title: "Russian River Steelhead Main Data Analyses, Notebook 5"
+author: "Anne Beulke"
 output: html_notebook
 ---
 

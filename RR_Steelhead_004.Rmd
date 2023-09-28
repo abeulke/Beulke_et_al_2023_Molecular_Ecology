@@ -1,6 +1,7 @@
 ---
 title: "Russian River Steelhead 2007-2020, Notebook 4"
 subtitle: "Iterperous fish analyses"
+author: "Anne Beulke"
 output: html_notebook
 ---
 Import the data:

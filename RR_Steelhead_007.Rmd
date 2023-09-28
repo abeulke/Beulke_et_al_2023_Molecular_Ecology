@@ -1,246 +1,393 @@
 ---
-title: "R Notebook"
-output: html_notebook
+title: "RR Steelhead, Mixed modeling of Omy5 influence on age at maturity, Notebook 7"
+author: "Neil Thompson and Anne Beulke"
+date: "3/12/2020"
+output: html_document
 ---
 
-```{r}
-get_rxys <- function(data) {
-  d <- semi_join(rdat$gdata, data, by = c("V1" = "indiv"))
-  rxy1 <- related::coancestry(d, quellergt=1, allele.freqs = rdat$freqs)$relatedness %>%
-    as_tibble() %>%
-    select(ind1.id, ind2.id, quellergt) %>%
-    rename(ind1 = ind1.id, ind2 = ind2.id)
-  rxy2 <- rxy1[, c(2,1,3)] %>%
-    set_names(c("ind1", "ind2", "quellergt"))
-  
-  bind_rows(rxy1, rxy2)
-}
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
 ```
-
-```{r}
-library(lubridate)
-
-day_fish_WS_1 <- spawn_rows %>%
-  mutate(spawn_date = mdy(spawn_date)) %>%
-  filter(hatchery == "Warm_Springs") %>% 
-  group_by(spawn_date) %>%
-  nest() %>%
-  arrange(spawn_date) %>%
-  mutate(num_fish = map_int(data, nrow))
-
-day_fish_CV_1 <- spawn_rows %>%
-  mutate(spawn_date = mdy(spawn_date)) %>%
-  filter(hatchery == "Coyote_Valley") %>% 
-  group_by(spawn_date) %>%
-  nest() %>%
-  arrange(spawn_date) %>%
-  mutate(num_fish = map_int(data, nrow))
-
-day_fish_WS_1
-day_fish_CV_1
-```
-
-```{r, eval=FALSE}
-rxys_in_days_WS_1 <- day_fish_WS_1 %>%
-  mutate(pairs = map(data, get_rxys))
-
-rxys_in_days_CV_1 <- day_fish_CV_1 %>%
-  mutate(pairs = map(data, get_rxys))
-```
-
-########
-
-```{r}
-rxys_in_days_WS_1 
-rxys_in_days_CV_1
-```
-
-```{r}
-#pairs has the rxy data, "quellergt"
-
-rxys_in_days_WS_1 %>% 
-  mutate(year = year(spawn_date)) %>% 
-  ungroup %>% 
-  count(year) %>% summarise(mean(n))
-#15.5 spawn days per year at Warm Springs
-
-rxys_in_days_CV_1 %>% 
-  mutate(year = year(spawn_date)) %>% 
-  ungroup %>% 
-  count(year) %>% summarise(mean(n))
-#14.1 spawn days per year at CV
-```
-
-```{r}
-trythis <- function(x,y){
-  a <- x %>%
-    filter(year == y)
-  
-  b <- a$pairs %>% flatten
-  mean_rxy <- a %>% 
-    summarise(y, mean_qgt = mean(b$quellergt), num_rxys_in_mean = n() )
-  
-  print(mean_rxy)
-}
-
-one <- rxys_in_days_WS_1 %>% 
-  mutate(year = year(spawn_date)) %>% 
-  ungroup 
-two <- rxys_in_days_CV_1 %>% 
-  mutate(year = year(spawn_date)) %>% 
-  ungroup 
-
-years_WS <- as.list(seq(2007,2020, 1))
-years_CV <- as.list(seq(2009,2020, 1))
-  
-  
-stuff <- map_dfr(years_WS, ~trythis(one,.x)) %>% mutate(hatchery = "Warm_Springs")
-
-stuff2 <-  map_dfr(years_CV, ~trythis(two,.x)) %>% mutate(hatchery = "Coyote_Valley")
-
-all_stuff <- bind_rows(stuff, stuff2)
-
-ggplot(all_stuff)+
-  geom_point(aes(x = y, y =mean_qgt, color = hatchery))+
-  geom_line(aes(x = y, y = mean_qgt, color = hatchery))+
-  scale_color_brewer(palette = "Dark2")+
-  scale_x_continuous(breaks=seq(2007,2020, 1))+
-  #ylim(-0.0035, 0)+
-  labs(title ="Annual mean relatedness of individuals spawned on the same day", y = "Mean relatedness among individuals")+
-  theme_classic()
-
-#write_rds(all_stuff, "annual_relatedness_by_spawn_day.rds")
-  
-```
-
-
-
-Trying to look at relatednes of pairs and number of offspring per pair
-
-```{r}
-trio_stuff <- read_csv("/Users/annebeulke/Documents/Russian-River-R/Russian-River/RR_2007-2020_pedigree_ages_lengths.csv")
-trio_stuff
-```
-
-
-```{r}
-rxys_in_days_WS_1$data 
-rxys_in_days_CV_1
-
-extract_observed_rxy <- function(tdf, rxyp) {
-  left_join(tdf, rxyp, by = c("pa" = "ind1", "ma" = "ind2"))
-}
-
-trio_stuff
-
-rxy_results_WS <- interm1_WS %>%
-  mutate(obs_rxy = map2(.x = trios, .y = rxy_pairs, .f = extract_observed_rxy))
-rxy_results_CV <- interm1_CV %>%
-  mutate(obs_rxy = map2(.x = trios, .y = rxy_pairs, .f = extract_observed_rxy)) 
-  
-rxy_results_CV
-rxy_results_WS
-
+```{r,libraries, warning=FALSE,message=FALSE}
 library(tidyverse)
-offspring_nums <- read_csv("/Users/annebeulke/Documents/Russian-River-R/Russian-River/RR_offspring_num_per_pair.csv") %>% separate(., id, sep = ":", into = c("pa", "ma")) %>% select(-type)
-offspring_nums
-```
-```{r}
-
-
-trythis2 <- function(rxy,offsp){
-  a <- rxy %>%
-    unnest(obs_rxy)
-
-  b <- inner_join(a, offsp, by = c("pa", "ma"))
-  
-  print(b)
-}
-
-
-  
-  
-cv_qgt <- trythis2(rxy_results_CV, offspring_nums) %>% mutate(pair = str_c(pa, ma, sep = "_"))
-ws_qgt <- trythis2(rxy_results_WS, offspring_nums) %>% mutate(pair = str_c(pa, ma, sep = "_"))
+library(readxl)
+library(lubridate)
+library(kableExtra)
+library(knitr)
+library(ordinal)
+library(MASS)
+library(cowplot)
 ```
 
-```{r}
-ws1 <- ws_qgt %>% 
-  group_by(pair) %>% 
-  filter(n > 1) %>% 
-  slice(1)
+## DATA prep for Age At Maturity mykiss study and defining questions for the study.
 
-ws2 <- ws_qgt %>% 
-  group_by(pair) %>% 
-  filter(n <= 1) 
+Does omy5 genotype influence age at return?
 
-ws3 <- bind_rows(ws1,ws2)
 
-cv1 <- cv_qgt %>% 
-  group_by(pair) %>% 
-  filter(n > 1) %>% 
-  slice(1)
+load data
+```{r, load data, warning=FALSE,message=FALSE}
+pedigree <- read_csv("RR_pedigree_07-20_known_sexes.csv")
+metadata <- read_csv("RR_2007-2020_pedigree_ages_lengths.csv")
 
-cv2 <- cv_qgt %>% 
-  group_by(pair) %>% 
-  filter(n <= 1) 
-
-cv3 <- bind_rows(cv1,cv2)
+omy5_geno <- read_csv("RR_2007-2020_Omy5_fish_list.csv")
 ```
+
+
 
 ```{r}
-
-ggplot(data = ws3)+
-  geom_hex(aes(x = quellergt, y = n))+
-  labs(title = "Warm Springs", y ="Num Offspring per Pair", x = "rxy per pair")+
-  scale_y_continuous(breaks = (seq(0, 30, 2)))+
-  facet_wrap(~SpawnYear)
-
-ggplot()+
-  geom_hex(data = cv3, aes(x = quellergt, y = n))+
-  labs(title = "Coyote Valley", y ="Num Offspring per Pair", x = "rxy per pair")+
-  scale_y_continuous(breaks = (seq(0, 30, 1)))+
-  facet_wrap(~SpawnYear)
-
-ggplot()+
-  geom_point(data = ws3, aes(x = quellergt, y = n))+
-  labs(title = "Warm Springs", y ="Num Offspring per Pair", x = "rxy per pair")
-
-ggplot()+
-  geom_point(data = cv3, aes(x = quellergt, y = n))+
-  labs(title = "Coyote Valley", y ="Num Offspring per Pair", x = "rxy per pair")
-
-ggplot()+
-  geom_count(data = ws3, aes(x = quellergt, y = n))+
-  labs(title = "Warm Springs", y ="Num Offspring per Pair", x = "rxy per pair")
-
-ggplot()+
-  geom_count(data = cv3, aes(x = quellergt, y = n))+
-  labs(title = "Coyote Valley", y ="Num Offspring per Pair", x = "rxy per pair")
-
-ws3 %>% 
-  ggplot()+
-  geom_hex(aes(x = quellergt, y = n))+
-  labs(title = "Warm Springs", y ="Num Offspring per Pair", x = "rxy per pair")+
-  scale_y_continuous(breaks = (seq(0, 30, 2)))
-  
-ggplot()+
-  geom_hex(data = cv3, aes(x = quellergt, y = n))+
-  labs(title = "Coyote Valley", y ="Num Offspring per Pair", x = "rxy per pair")+
-  scale_y_continuous(breaks = (seq(0, 30, 1)))
-
-
+omy5_geno
+omy5_tojoin <- omy5_geno %>% 
+  select(indiv, SH114448_types)
 ```
 
-```{r}
-cv_qgt %>% filter(n > 15)
-ggplot()+
-  geom_count(aes(x = quellergt, y = n))
+#Make a master dataframe to do some plotting and statistical analysis.
+```{r, model data, warning=FALSE,message=FALSE}
+model_data <- left_join(metadata, omy5_tojoin, by = c("kid" = "indiv"))
 
-ggplot()+
-  geom_count(data = cv_qgt, aes(x = quellergt, y = n))
+model_data  %>%
+  mutate(omy5f = factor(SH114448_types, levels=c("A_A","A_R","R_R"))) %>%
+  filter(kid_age <5, !is.na(kid_length), !is.na(omy5f))%>%
+  ggplot(., aes(x=kid_length, color=omy5f, fill=omy5f)) + 
+  geom_histogram(binwidth = 20) + 
+  #geom_density( alpha = 0.2)+
+  facet_grid(omy5f~kid_age, scales="free_y")
+```
+
+```{r,fl distribution by geno,age, and year warning=FALSE,message=FALSE}
+model_data %>%
+  mutate(fl_cm = kid_length/10) %>%
+  mutate(omy5f = factor(SH114448_types, levels=c("A_A","A_R","R_R"))) %>%
+  filter(kid_age<5, !is.na(kid_length), !is.na(omy5f))%>%
+  ggplot(., aes(x=fl_cm, color=omy5f, fill=omy5f)) + 
+  geom_histogram(binwidth = 2) + 
+  #geom_density( alpha = 0.2)+
+  scale_x_continuous(limits=c(40,100))+
+  facet_grid(SpawnYear~kid_age, scales="free_y")
+```
+
+```{r, summary table of number of fish per geno by age and birth year, warning=FALSE,message=FALSE}
+model_data %>%
+  mutate(fl_cm = kid_length/10) %>%
+  mutate(omy5f = factor(SH114448_types, levels=c("A_A","A_R","R_R"))) %>%
+  filter(kid_age<5, !is.na(kid_length), !is.na(omy5f))%>%
+  count(SpawnYear, kid_age, omy5f) %>%
+  arrange(SpawnYear) %>% spread(omy5f,n) %>% rename(birth_year = SpawnYear)
+  #kable("html") %>% kable_styling("striped")
+```
+
+```{r, mean fl per geno by year, warning=FALSE,message=FALSE}
+model_data %>%
+  mutate(fl_cm = kid_length/10) %>%
+  mutate(omy5f = factor(SH114448_types, levels=c("A_A","A_R","R_R"))) %>%
+  filter(kid_age <5, !is.na(kid_length), !is.na(omy5f))%>% group_by(kid_age,SpawnYear, omy5f) %>%
+  summarise(mean_fl = mean(kid_length),
+            sd_fl = sd(kid_length),
+            n_fish = n()) %>% 
+  rename(birth_year = SpawnYear)
+  #kable("html") %>% kable_styling("striped")
 ```
 
 
+Re-organize the model data so that more important information are in columns further left in the dataframe, and rename a few columns
 
+```{r, adjust model data for easier manipulation, warning=FALSE,message=FALSE}
+model_1 <- model_data %>% 
+  rename(kid_birthyear = SpawnYear, omy5_geno = SH114448_types) %>%
+  dplyr::select(kid, kid_age, omy5_geno, new_kid_sex, kid_length, kid_year, kid_birthyear, ma, pa, everything())
+```
+
+```{r, create df with no missing data, warning=FALSE, message=FALSE}
+mod_nomiss <- model_1 %>%
+  filter(!is.na(new_kid_sex), !is.na(ma_hatchery), !is.na(kid_age)) %>%
+  filter(kid_age < 5) %>% # remove fish 5 years old or older --> not real assignments.
+  mutate(kid_birthyearf =  factor(kid_birthyear, levels = c(2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017, 2018)),
+         omy5genof = factor(omy5_geno, levels=c("A_A","A_R","R_R")), #make A_A the reference geno
+         kid_sex_f = factor(new_kid_sex, levels=c("Female","Male")), # make F the reference sex
+         kid_age_f = factor(kid_age, levels=c(2,3,4), ordered=TRUE),
+         ma_hatchery = factor(ma_hatchery, levels = c("Coyote_Valley", "Warm_Springs"))) %>%
+  filter(!is.na(omy5genof))
+  # Coyo-Valley is the reference level.
+
+mod_nomiss %>%
+  count(omy5genof, kid_birthyear, kid_age, kid_sex) %>%
+  pivot_wider(values_from = n, names_from = omy5genof, values_fill = list(n = 0)) %>%
+  arrange(kid_birthyear,kid_sex,kid_age)  %>%
+  mutate(n_tot = A_A+A_R+R_R)
+  #kable("html", caption = "numbers of fish per genotype, birthyear and age") %>% 
+  #kable_styling("striped",full_width = FALSE)
+
+```
+ 
+Some of the groupings have very few fish.  But each birthyear has a pretty large number of observations. So unlike the lenght analysis I'm going to keep all birthyears for this analysis. 
+
+Rough plot of all the data by sex and ma_hatchery.
+```{r, ggplot number of fish per geno within age and sex, warning=FALSE,message=False}
+mod_nomiss %>%  
+  ggplot(., aes(x=omy5_geno)) + 
+  geom_bar() + 
+  facet_grid(new_kid_sex + ma_hatchery ~ kid_age, scales="free_y")
+```
+ 
+There could be a bit different age structure between coyote valley and warm springs. I'll use ma_hatchery in the model to see if mean age at return differs among populations.
+
+ggplot the percentage of each genotype that returns per age class.
+
+Plot of the percentage by genotype of fish that returned in age 2, 3 and 4 age classes. The proportion is calculated by genotype, not by age class. So the A_A age 2 proportion + A_A age 3 proportion + A_A age 4 proportion sum to 1.0 The A_A, R_A, R_R within an age class do not sum to 1.0
+
+```{r, ggplot percentage return, warning=FALSE,message=FALSE}
+mod_nomiss %>% 
+  group_by(omy5_geno, kid_age, ma_hatchery) %>%
+  mutate(n_geno_age = n()) %>% 
+  group_by(omy5_geno, ma_hatchery) %>%
+  mutate(n_geno = n()) %>% 
+  ungroup() %>% 
+  distinct(omy5_geno, kid_age, ma_hatchery, n_geno_age, n_geno) %>%
+  mutate(pct_geno = n_geno_age/n_geno) %>%
+  ggplot(., aes(x=omy5_geno, y=pct_geno)) + geom_col() +
+  facet_grid(ma_hatchery ~ kid_age) +
+  theme_bw() + ggtitle("all fish, both sexes")
+```
+
+Female fish only
+```{r, ggplot percentage return females, warning=FALSE,message=FALSE}
+female_proportion <- mod_nomiss %>% 
+  filter(new_kid_sex=="Female", kid_birthyear > 2009) %>%
+  group_by(omy5_geno, kid_age, ma_hatchery) %>%
+  mutate(n_geno_age = n()) %>% 
+  group_by(omy5_geno, ma_hatchery) %>%
+  mutate(n_geno = n()) %>% 
+  ungroup() %>% 
+  distinct(omy5_geno, kid_age, ma_hatchery, n_geno_age, n_geno) %>%
+  mutate(pct_geno = n_geno_age/n_geno) %>%
+  ggplot(., aes(x=omy5_geno, y=pct_geno)) + geom_col() +facet_grid(ma_hatchery ~ kid_age) +
+  scale_y_continuous(limits=c(0,1)) + theme_bw() + ggtitle("Females")
+female_proportion
+```
+
+Male fish only.  
+
+```{r, ggplot percentage return males, warning=FALSE,message=FALSE}
+male_proportion <- mod_nomiss %>% filter(new_kid_sex=="Male", kid_birthyear>2009) %>%
+  group_by(omy5_geno, kid_age, ma_hatchery) %>%
+  mutate(n_geno_age = n()) %>% 
+  group_by(omy5_geno, ma_hatchery) %>%
+  mutate(n_geno = n()) %>% 
+  ungroup() %>% 
+  distinct(omy5_geno, kid_age, ma_hatchery, n_geno_age, n_geno) %>%
+  mutate(pct_geno = n_geno_age/n_geno) %>%
+  ggplot(., aes(x=omy5_geno, y=pct_geno)) + geom_col() +facet_grid(ma_hatchery ~ kid_age) +
+  scale_y_continuous(limits=c(0,1))+
+  theme_bw() +
+  ggtitle("Males")
+male_proportion
+```
+
+The data patterns look quite different for male and female fish.  I hypothesize that there is a significant interaction between omy5 genotype and sex. Because we're working with an ordinal response I may conduct 2 separate analysis to keep the interpretation of the results simpler and easier to understand. 
+
+Cowplot these together for a manuscript figure
+```{r, manuscript fig, warning=FALSE,message=FALSE}
+manuscript_fig <- cowplot::plot_grid(male_proportion, 
+                            female_proportion, 
+                            labels = c("A", "B"), 
+                            ncol = 2, 
+                            align = "v")
+manuscript_fig
+```
+
+
+check model data structure to ensure everything is the way I want it.
+```{r, check model data, warning=FALSE,message=FALSE}
+str(mod_nomiss)
+
+mod_nomiss%>%count(kid_sex)
+```
+
+
+Full model with interaction and random effect
+```{r, full models with differing random effects clmm, warning=FALSE,message=FALSE}
+mm1 <- clmm(kid_age_f ~ ma_hatchery + omy5genof * kid_sex_f + (1|kid_birthyearf) + (1|ma), data = mod_nomiss, Hess=TRUE)
+mm1a <- clmm(kid_age_f ~ ma_hatchery + omy5genof * kid_sex_f + (1|kid_birthyearf), data = mod_nomiss, Hess=TRUE)
+mm1b <- clmm(kid_age_f ~ ma_hatchery + omy5genof * kid_sex_f + (1|ma), data = mod_nomiss, Hess=TRUE)
+```
+
+Evaluate random effects  
+```{r, eval random effects, warning=FALSE,message=FALSE}
+anova(mm1,mm1a) # LRT to determine if model with (1|ma) is preferred over simpler model.
+anova(mm1,mm1b) # LRT to determine if model with (1|birthyear) is preferred over simpler model.
+```
+
+Fit a full model without the random effects and compare it to the full model with Ma and birthyear as random effects  
+```{r, non-mixed model, warning=FALSE,message=FALSE}
+clm1 <- clm(kid_age_f ~ ma_hatchery + omy5genof * kid_sex_f, data=mod_nomiss, Hess=TRUE)
+anova(clm1,mm1)
+```
+
+Random effect of brood_year and mother ID are highly significant. Move on with a mixed effects model. The model is also highly preffered over a non-mixed model.  
+
+To continue the analysis I'll evaluate the significance of the fixed effects. Fit model without interaction and test if the interaction is signigicant using a likelihood ratio test.  
+```{r, fixed effects model selection AIC, warning=FALSE,message=FALSE}
+drop1(mm1, test="Chisq") # lowest AIC is to retain all fixed effects
+```
+
+Ma_hatchery is highly significant and the interaction term is as well. That means the effect of omy5 genotype on age at return is different for male and female fish.
+
+Summary of full model with interaction term. The effect size estimates on the interaction term are what I'm interested in here.
+```{r, mm1 summary, warning=FALSE,message=FALSE}
+summary(mm1)
+```
+
+##Taking stock of the results to this point##  
+
+With all the data there is  significant interaction between sex and omy5 genotype where the effect of genotype increases the probability of returning at younger ages in males. 
+
+This is what I'd expect given the different data patterns seen in the proportion graphs. The female only plot shows little difference among genotype proportions within an age class, whereas the male only plot shows a pretty distinct pattern of higher R_R proportion in age 2 compared to age 3 and vice versa for the A_A proportion.  
+
+
+Test if Ma_Hatchery has the same effect on age in male and female fish.  
+```{r, test hatchery by sex interaction, warning=FALSE,message=FALSE}
+mm_hatch <- clmm(kid_age_f ~ ma_hatchery * kid_sex_f + (1|kid_birthyearf)+(1|ma), data=mod_nomiss, Hess=TRUE)
+drop1(mm_hatch, test="Chisq")
+```
+The interaction is not significant, so this means the effect of Ma_hatchery is not different for males and females.
+
+#testing the proportional odds assumption to make sure the model is behaving properly.
+```{r, test proportional odds for sex effect, warning=FALSE,message=FALSE}
+mm_hatch_tmp <- clmm2(kid_age_f ~ ma_hatchery+kid_sex_f, random=kid_birthyearf, data=mod_nomiss,Hess = TRUE)
+mm_hatch_nomsex <- clmm2(kid_age_f ~ ma_hatchery, nominal=~kid_sex_f, random=kid_birthyearf, data=mod_nomiss)
+anova(mm_hatch_tmp, mm_hatch_nomsex) # no nominal effect on kid_sex
+```
+
+P-value being greater tha 0.05 shows no violation of proportional odds assumption for kid_sex_f is occuring. To do this I had to use clmm2 instead of clmm because the nominal feature is not implemented with clmm as of april 2020. I retained the random effect kid birthyear because it had a higher liklihood ratio test statistic in previous analyses.  
+
+
+```{r,test proportional odds Ma_hatchery, warning=FALSE,message=FALSE}
+mm_hatch_nomhatch <- clmm2(kid_age_f ~ kid_sex_f, nominal=~ma_hatchery, random=kid_birthyearf, data=mod_nomiss)
+anova(mm_hatch_tmp, mm_hatch_nomhatch)
+```
+
+P-value less than 0.05 indicates a violation of the proportional odds assumption for the Ma_Hatchery variable. This means that the effect of Ma_Hatchery differs with the different age classes. See https://www3.nd.edu/~rwilliam/stats3/Gologit2Part2.pdf for an explanation of the proportional odds violations. 
+
+Add scale effect on Ma_Hatchery and re-run interaction effect model selection
+```{r, scale effect ma_hatchery, warning=FALSE,message=FALSE}
+mm_hatch_tmp_scale_int <- clmm2(kid_age_f ~ ma_hatchery * kid_sex_f, scale = ~ma_hatchery, random=kid_birthyearf, data=mod_nomiss, Hess = TRUE)
+
+mm_hatch_tmp_scale <- clmm2(kid_age_f ~ ma_hatchery + kid_sex_f, scale = ~ma_hatchery, random=kid_birthyearf, data=mod_nomiss, Hess=TRUE)
+summary(mm_hatch_tmp_scale)
+
+anova(mm_hatch_tmp_scale_int,mm_hatch_tmp_scale) 
+```
+
+LRT on interaction effect is non-significant. I had to use clmm2 and a single random effect because clmm is not capable of introducing scale or nominal effects into the model as of April 2020. I chose to use the birthyear random effect because it had stronger support for explaining more variance in prior analysis. I don't think not having the ma random effect would produce a different result here. Overall, the effect of Ma_Hatchery on age at return does not differ between male and female fish. That was the main goal of this analysis to determine if there was a difference in that fixed effect.
+
+The scale effect for Warm Springs shifts the latent variable distribution by `r round(exp(0.1080),4)` at Warm Springs hatchery. So the thresholds for transitioning from one age class to the next are 8.5% larger in Warm Springs compared to Coyote Valley.  This makes intuitive sense because Warm Springs appeared to have a larger number of age 2 fish returning to the facility and thus the probability that a WSH fish returns at age 2 would be higher than an identical age 2 returning to Coyote Valley. See pg 23, figure 3, of https://cran.r-project.org/web/packages/ordinal/vignettes/clm_article.pdf for a graphical representation of what the shift in latent variable looks like.
+
+###Now that we know the effect of Ma_Hatchery is not different for males and females I'll move on to conducting analyses for each sex independently###  
+
+I chose to do this to simplify model interpretation because of the interaction between omy5 genotype and sex on age at return. That is, the effect of omy5 genotype is stronger in males than females on age at return. Making clear model interpretations from a model with an interaction term gets hard, and in a cumulative link mixed effects model that is already hard to interpret I'm looking to simplify the analyses as much as possible. To facilitate this I'm going to perform separate analyses for the male and females in the data set.
+
+##Male analysis##
+```{r, male random effects analysis, warning=FALSE, message=FALSE}
+male_data <- mod_nomiss %>% filter(new_kid_sex =="Male")
+
+mm1_male <- clmm(kid_age_f ~ ma_hatchery * omy5genof+(1|kid_birthyearf)+(1|ma), data=male_data, Hess=TRUE)
+mm1a_male <- clmm(kid_age_f ~ ma_hatchery * omy5genof+(1|kid_birthyearf), data=male_data, Hess=TRUE)
+mm1b_male <- clmm(kid_age_f ~ ma_hatchery * omy5genof+(1|ma), data=male_data, Hess=TRUE)
+clm_male <- clm(kid_age_f ~ ma_hatchery * omy5genof, data=male_data, Hess=TRUE)
+```
+
+Conduct likelihood ratio tests to determine the preffered random effects structure
+```{r, male random effects LRT, warning=FALSE,message=FALSE}
+anova(mm1_male, mm1a_male) # test of ma --> highly significant
+anova(mm1_male, mm1b_male) # test of birthyear --> highly significant
+anova(mm1_male, clm_male) # test of using random effects --> highly significant.
+```
+
+The model with kid_birthyear and ma is preffered. Using both those as random effects is what I'll do.
+
+```{r,male fixed effects test, warning=FALSE,message=FALSE}
+drop1(mm1_male, test="Chisq") # interaction is not significant. 
+
+mm2_male <- clmm(kid_age_f ~ ma_hatchery + omy5genof + (1|kid_birthyearf) + (1|ma), data=male_data, Hess=TRUE)
+
+drop1(mm2_male, test="Chisq")
+```
+Both Ma_Hatchery and omy5geno are significant when a likelihood ratio test is used. There is no significant interaction between Ma_Hatchery and omy5 genotype, this means the effect of omy5 genotype does not differ among hatcheries.
+
+Let's check model assumptions on mm2_male now. The clmm function doesn;t have methods for assessing the proportional odds assumption I'm going to refit the model with clmm2 and a single random effect. This isn;t ideal, but its what is available to check the assumption.  See https://github.com/runehaubo/ordinal/issues/12 for more detail. I'm going to retain birthyear as the random effect because it had a much higher test statistic than ma during the random effects model selection.
+
+```{r, male model assumptions check, warning=FALSE,message=FALSE}
+male_mod2check <- clmm2(kid_age_f ~ ma_hatchery + omy5genof, random=kid_birthyearf, data=male_data)
+male_hatch_nom <- clmm2(kid_age_f ~ omy5genof, nominal=~ ma_hatchery, random=kid_birthyearf, data=male_data)
+male_geno_nom <- clmm2(kid_age_f ~ ma_hatchery, nominal=~omy5genof, random=kid_birthyearf, data=male_data)
+
+anova(male_mod2check, male_hatch_nom) # no evidence for nominal effect on hatchery
+anova(male_mod2check, male_geno_nom) # no evidence for nominal effect on omy5 genotype. 
+```
+No violation of proportional odds assumption for Ma_Hatchery or omy5 genotype. Onto model summaries.  
+
+Look at the effects size for Ma_Hatchery and omy5 genotype for the male analysis
+```{r, male effects, warning=FALSE,message=FALSE}
+summary(mm2_male)
+tab_model(mm2_male)
+```
+
+Interpret the results!!!!  https://stats.idre.ucla.edu/r/dae/ordinal-logistic-regression/  ctrl-f "Interpreting the odds ratio"
+```{r, interpret odds ratio males, warning=FALSE, message=FALSE}
+exp(cbind(OR = coef(mm2_male), confint(mm2_male)))
+```
+
+For R_A male fish the odds of returning at age 3 or age 4 is  `r (1-0.478) * 100` percent lower than A_A males controlling for Ma_Hatchery.  The 95% CI for the odds ratio is `r (1-0.535)*100` to `r (1-0.428)*100` percent lower than A_A males.
+
+For R_R male fish, the odds of being age 3 or age 4 is `r (1-0.353)*100` percent lower than A_A males controlling for Ma_hatchery. The 95% CI for the odds ratio is `r (1-0.461)*100` to `r (1-0.271)*100` percent lower than A_A males.
+#above are the 2007-2020 values
+
+
+
+##Female analysis
+```{r, random effects in females, warning=FALSE,message=FALSE}
+female_data <- mod_nomiss %>% filter(new_kid_sex =="Female") %>% mutate(ma_f = factor(ma))
+
+mm1_female <- clmm(kid_age_f ~ ma_hatchery*omy5genof+(1|kid_birthyearf)+(1|ma), data=female_data, Hess=TRUE)
+mm1a_female <- clmm(kid_age_f ~ ma_hatchery*omy5genof+(1|kid_birthyearf), data=female_data, Hess=TRUE)
+mm1b_female <- clmm(kid_age_f ~ ma_hatchery*omy5genof+(1|ma), data=female_data, Hess=TRUE)
+clm_female <- clm(kid_age_f ~ ma_hatchery*omy5genof, data=female_data, Hess=TRUE)
+```
+
+random effects model selection
+```{r, female random effects significance, warning=FALSE,message=FALSE}
+anova(mm1_female, mm1a_female) # lrt on ma --> highly signif 
+anova(mm1_female, mm1b_female) # lrt on kid birthyear --> is signif 
+anova(mm1a_female, clm_female) # lrt on ma random effect vs non-random model --> highly signif
+```
+Mother ID is highly significant but kid birthyear was not statistically significant the so the full model moving forward will only contain mother ID as a random effect.
+##2007-2020 data the kid birthyear is now significant and will be added to the model
+
+```{r,female fixed effects test, warning=FALSE,message=FALSE}
+mm2_female <- clmm(kid_age_f ~ ma_hatchery + omy5genof +  (1|ma), data=female_data, Hess=TRUE)
+
+drop1(mm2_female, test="Chi") #Error: optimizer nlminb failed to converge, when include kid_birthyear in model
+
+```
+#Error: optimizer nlminb failed to converge, when I have both kid_birthyear and ma in the model
+#If I take out kid birthyear the model works --- maybe tied to low numbers of females in each group when divided by year?
+
+#notes by anne:
+so when we include kid_birthyear the model fails, when we we remove it and then run the "drop1" command, we find tehre is not significant values --- so we stop here, no need to more further. not significant for females...
+
+Omy5 genotype does not have a significant effect on age at return in females using a likelihood ratio test (df=2,lr =1.6, p = 0.44). Ma_Hatchery does not have a significant influence on female age at return either (df=1,lr =01, p = 0.74).
+
+Now check model assumptions. I'll use the same process that I did with the males. 
+#should I re-do these with kid birthyear included?
+
+```{r, female model assumptions check, warning=FALSE,message=FALSE}
+female_mod2check <- clmm2(kid_age_f ~ ma_hatchery+omy5genof, random=ma_f, data=female_data, Hess=TRUE)
+female_geno_nom <- clmm2(kid_age_f ~ ma_hatchery, nominal=~omy5genof, random=ma_f, data=female_data, Hess=TRUE)
+female_hatch_nom <- clmm2(kid_age_f ~ omy5genof, nominal=~ma_hatchery, random=ma_f, data=female_data, Hess=TRUE)
+
+anova(female_mod2check, female_geno_nom) # nominal effect on genotype
+anova(female_mod2check, female_hatch_nom) # no evidence for nominal effect on hatchery
+summary(female_mod2check) # hessian number is small.
+```
+
+No violation of proportional odds on Ma_Hatchery. There is a violation of proportional odds on omy5 genotype, but the hessian number of the model is wicked low so I'm inclined to not worry about this much. Especially since the effect is not significant. IF we were reporting effects sizes and more detail from this model I'd investigate the nominal effect on omy5 genotype, but since we're not doing that.....we're done.
 

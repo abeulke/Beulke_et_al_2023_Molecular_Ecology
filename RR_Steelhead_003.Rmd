@@ -1,5 +1,6 @@
 ---
 title: "Removing problematice loci and re-running HatcheryPedAgree, Notebook 3"
+author: "Anne Beulke"
 output: html_notebook
 ---
 

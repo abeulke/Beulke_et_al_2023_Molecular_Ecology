@@ -1,6 +1,7 @@
 ---
 title: "RR Steelhead 2007-2020, Notebook 1"
 subtitle: "Cleaning up the genotype data"
+author: "Anne Beulke"
 output: html_notebook
 ---
 
