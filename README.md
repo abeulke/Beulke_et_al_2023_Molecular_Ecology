@@ -7,4 +7,4 @@ Authors: Anne K. Beulke, Alicia Abadía-Cardoso, Devon E. Pearse, Laura C. Goetz
 
 DOI: 
 
-Data used in these analyses can be found on Dryad at: 
+Data used in these analyses can be found on Dryad at: https://doi.org/10.5061/dryad.4f4qrfjjq
